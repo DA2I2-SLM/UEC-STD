@@ -29,7 +29,7 @@ bash ./scripts/long_term_forecast/ETTh1_script/TimeMixer_ETTh1_test.sh 3 1 384 1
 ```
 Argument explaination:
 - 3: A special mode of doing inference that generate data for training ECM and conduct the training
-- 1: Turn on autoregressive decoding
+- 1: Turn on autoregressive decoding. It should be always 1. If it set to 0, the input for autoregressive decoding will be the ground truth.
 - 384: The length of the decoding sequence. It should be multiples of the unit prediction length (96)
 - 1: Turn on the rate of error correcting. It is not used in mode 3
  
@@ -38,7 +38,8 @@ Run the ECM script with different arguments
 ```bash
 bash ./scripts/long_term_forecast/ETTh1_script/TimeMixer_ETTh1_test.sh 4 1 336 1
 ```
-Note: the testing length (336) can be different from the training length (384).
+- 4: A special mode of doing inference that evaluate the ECM
+- Note: the testing length (336) can be different from the training length (384).
 To do mass evaluation with different decoding lengths and error correcting rates:
 ```python
 python run_eval.py --data ETTh1 --model TimeMixer
