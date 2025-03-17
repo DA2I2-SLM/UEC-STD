@@ -1,16 +1,23 @@
 # TimeSeriesECM
-Timeseries With Error Corrrection Model (Autoregressive Decoding)
+Timeseries With Error Correction Model (Autoregressive Decoding)
 
 Reference Repo: https://github.com/thuml/Time-Series-Library
 
 ## Setup
 ```bash
 # Install Python
-conda create -n timemd python=3.8
+conda create -n timeecm python=3.8
 conda activate timeecm
 # Install other dependencies
 pip install -r requirements.txt
 ```
+
+## Dataset Preparation
+```bash
+mkdir scratch
+mkdir scratch/dataset/
+```
+Down load and unzip the dataset in https://github.com/thuml/Time-Series-Library
 
 ## Experiment Steps
 Follow these steps to create and evaluate ECM
@@ -19,7 +26,7 @@ For example, train TimeMixer with ETTh1 dataset:
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1.sh
 ```
-The checkpoints and logs should be found in ./scratch/
+The checkpoints and logs should be found in ./scratch/checkpoints and ./scratch/results
 
 #### Train the ECM model
 First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
@@ -27,22 +34,30 @@ For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. 
 ```bash
 bash ./scripts/long_term_forecast/ETTh1_script/TimeMixer_ETTh1_test.sh 3 1 384 1
 ```
-Argument explaination:
-- 3: A special mode of doing inference that generate data for training ECM and conduct the training
-- 1: Turn on autoregressive decoding. It should be always 1. If it set to 0, the input for autoregressive decoding will be the ground truth.
+Argument explanation:
+- 3: A special mode of doing inference that generates data for training ECM and conducts the training
+- 1: Turn on autoregressive decoding. It should be always 1. If it is set to 0, the input for autoregressive decoding will be the ground truth.
 - 384: The length of the decoding sequence. It should be multiples of the unit prediction length (96)
-- 1: Turn on the rate of error correcting. It is not used in mode 3
+- 1: Turn on the rate of error-correcting. It is not used in mode 3
+
+The ECM model is saved in the same checkpoint directory as the backbone model.
  
 #### Evaluate the ECM model
 Run the ECM script with different arguments
 ```bash
 bash ./scripts/long_term_forecast/ETTh1_script/TimeMixer_ETTh1_test.sh 4 1 336 1
 ```
-- 4: A special mode of doing inference that evaluate the ECM
+- 4: A special mode of doing inference that evaluates the ECM
 - Note: the testing length (336) can be different from the training length (384).
-To do mass evaluation with different decoding lengths and error correcting rates:
+To do a mass evaluation with different decoding lengths and error-correcting rates:
 ```python
 python run_eval.py --data ETTh1 --model TimeMixer
 ```
+The results should be found in ./scratch/infer_results/
 
+#### Report the ECM evaluation
+Report the TimeMixer ECM on ETTh1 dataset
+```python
+python report.py --dir ./scratch/infer_results/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0/
+```
 
