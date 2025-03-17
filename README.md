@@ -65,4 +65,3 @@ Report the TimeMixer ECM on ETTh1 dataset
 ```python
 python report.py --dir ./scratch/infer_results/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0/
 ```
-
