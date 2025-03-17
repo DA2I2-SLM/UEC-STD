@@ -14,10 +14,11 @@ pip install -r requirements.txt
 
 ## Dataset Preparation
 ```bash
+cd TimeSeriesECM
 mkdir scratch
 mkdir scratch/dataset/
 ```
-Down load and unzip the dataset in https://github.com/thuml/Time-Series-Library
+Download and unzip the dataset https://github.com/thuml/Time-Series-Library
 
 ## Experiment Steps
 Follow these steps to create and evaluate ECM
