@@ -33,7 +33,7 @@ The checkpoints and logs should be found in ./scratch/checkpoints and ./scratch/
 First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
 For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
 ```bash
-bash ./scripts/long_term_forecast/ETTh1_script/TimeMixer_ETTh1_test.sh 3 1 384 1
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 384 1
 ```
 Argument explanation:
 - 3: A special mode of doing inference that generates data for training ECM and conducts the training
@@ -46,7 +46,7 @@ The ECM model is saved in the same checkpoint directory as the backbone model.
 #### Evaluate the ECM model
 Run the ECM script with different arguments
 ```bash
-bash ./scripts/long_term_forecast/ETTh1_script/TimeMixer_ETTh1_test.sh 4 1 336 1
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1
 ```
 Argument explanation:
 - 4: A special mode of doing inference that evaluates the ECM
