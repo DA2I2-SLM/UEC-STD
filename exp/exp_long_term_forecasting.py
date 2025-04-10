@@ -1,19 +1,26 @@
-from data_provider.data_factory import data_provider
-from exp.exp_basic import Exp_Basic
-from utils.tools import EarlyStopping, adjust_learning_rate, visual, visualm
-from utils.metrics import metric
 import torch
 import torch.nn as nn
 from torch import optim
+import joblib
 import os
 import time
 import warnings
 import numpy as np
+import math
+
+from tqdm import tqdm
+
+from data_provider.data_factory import data_provider
+from exp.exp_basic import Exp_Basic
+from utils.tools import EarlyStopping, adjust_learning_rate, visual, visualm
+from utils.metrics import metric
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
-from tqdm import tqdm
-import math
+from .utils_ECM import ErrorCorrector, LogisticErrorCorrector, RandomForestErrorCorrector, XGBoostErrorCorrector, RNNErrorCorrector, CNNErrorCorrector, TransformerErrorCorrector
+
 warnings.filterwarnings('ignore')
+
+HOME_DIR = "/scratch/s223669184/project_data/Grant25/TimeSeriesECM"
 
 
 class Exp_Long_Term_Forecast(Exp_Basic):
@@ -170,11 +177,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join('./scratch/checkpoints/' + setting, 'checkpoint.pth')))
+            self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
 
         preds = []
         trues = []
-        folder_path = './scratch/test_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -234,7 +241,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = './scratch/results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -255,7 +262,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open("./scratch/results/result_long_term_forecast.txt", 'a')
+        f = open(f"result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
         f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
         f.write('\n')
@@ -268,15 +275,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return
     
-    def test_infer(self, setting, test=0):
+    def test_infer(self, setting, test=0, ecm="linear"):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join(f'./scratch/checkpoints/' + setting, 'checkpoint.pth')))
+            self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
 
         preds = []
         trues = []
-        folder_path = f'./scratch/infer_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -376,7 +383,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'./scratch/infer_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         
@@ -398,7 +405,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open("./scratch/results/result_long_term_forecast.txt", 'a')
+        f = open(f"result_long_term_forecast.txt", 'a')
         f.write(setting + "  \n")
         f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
         f.write('\n')
@@ -411,7 +418,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return
 
-    def train_infer_batch(self, setting, test=0):
+    def train_infer_batch(self, setting, test=0, ecm="linear"):
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -429,10 +436,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print("data prediction length: ", data_pred_len)
         print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'./scratch/checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
         preds = []
         trues = []
-        folder_path = f'./scratch/infer_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -547,7 +554,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'./scratch/infer_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         
@@ -569,7 +576,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         mae, mse, rmse, mape, mspe = metric(preds, trues)
         print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open("./scratch/results/result_long_term_forecast.txt", 'w')
+        f = open(f"result_long_term_forecast.txt", 'w')
         f.write(setting + "  \n")
         f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
         f.write('\n')
@@ -598,60 +605,195 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
 
-        modelerr = ErrorCorrector(input_dim=X.shape[-1],
+        if self.args.include_x0:
+            input_dim=X.shape[-1] * 2
+        else:
+            input_dim=X.shape[-1]
+
+        if ecm == "linear":
+            modelerr = ErrorCorrector(input_dim=input_dim,
                                     T=X.shape[1], 
                                     output_dim=Y.shape[-1],
                                     hidden_dim=self.args.err_h).to(self.device)
-        optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-        # optimizer = optim.RMSprop(modelerr.parameters(), lr=1e-6, alpha=0.99, eps=1e-8)
+            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+            loss_fn = nn.SmoothL1Loss()
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+            is_torch_model = True
 
-        # loss_fn = nn.MSELoss()
-        loss_fn = nn.SmoothL1Loss()
-        # loss_fn = nn.L1Loss()
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+        elif ecm == "logistic":
+            modelerr = LogisticErrorCorrector(input_dim=input_dim,
+                                            T=X.shape[1], 
+                                            output_dim=Y.shape[-1],
+                                            hidden_dim=self.args.err_h).to(self.device)
+            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+            loss_fn = nn.SmoothL1Loss()
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+            is_torch_model = True
 
-        best_val_loss = float('inf')  # Initialize best validation loss as infinity
+        elif ecm == "random_forest":
+            modelerr = RandomForestErrorCorrector(input_dim=input_dim,
+                                                T=X.shape[1], 
+                                                output_dim=Y.shape[-1],
+                                                )
+            is_torch_model = False
 
-        for epoch in range(100):
-            modelerr.train()
-            total_loss = 0
-            for xb, yb in train_loader:
-                optimizer.zero_grad()
-                pred = modelerr(xb)
-                loss = loss_fn(pred, yb)
-                loss.backward()
-                optimizer.step()
-                total_loss += loss.item() * xb.size(0)
-            
-            avg_loss = total_loss / len(train_loader.dataset)
-            scheduler.step(avg_loss)
-            print(f"Epoch {epoch+1} - Training Loss: {avg_loss:.4f}")
-            
-            # Validation phase
-            modelerr.eval()
-            val_loss = 0
-            with torch.no_grad():
-                for xb, yb in val_loader:
-                    pred = modelerr(xb)
+        elif ecm == "xgboost":
+            modelerr = XGBoostErrorCorrector(input_dim=input_dim,
+                                            T=X.shape[1], 
+                                            output_dim=Y.shape[-1],
+                                            )
+            is_torch_model = False
+        
+        elif ecm == "lstm":
+            modelerr = RNNErrorCorrector(input_dim=input_dim,
+                                        T=X.shape[1], 
+                                        output_dim=Y.shape[-1],
+                                        hidden_dim=self.args.err_h,
+                                        rnn_type=ecm).to(self.device)
+            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+            loss_fn = nn.SmoothL1Loss()
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+            is_torch_model = True
+        
+        elif ecm == "GRU":
+            modelerr = RNNErrorCorrector(input_dim=input_dim,
+                                        T=X.shape[1], 
+                                        output_dim=Y.shape[-1],
+                                        hidden_dim=self.args.err_h,
+                                        rnn_type=ecm).to(self.device)
+            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+            loss_fn = nn.SmoothL1Loss()
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+            is_torch_model = True
+        
+        elif ecm == "CNN":
+            modelerr = CNNErrorCorrector(input_dim=input_dim,
+                                        T=X.shape[1], 
+                                        output_dim=Y.shape[-1],
+                                        hidden_dim=self.args.err_h,
+                                        ).to(self.device)
+            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+            loss_fn = nn.SmoothL1Loss()
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+            is_torch_model = True
+        
+        elif ecm == "TF":
+            modelerr = TransformerErrorCorrector(input_dim=input_dim,
+                                                T=X.shape[1], 
+                                                output_dim=Y.shape[-1],
+                                                hidden_dim=self.args.err_h,
+                                                ).to(self.device)
+            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+            loss_fn = nn.SmoothL1Loss()
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+            is_torch_model = True
+        else:
+            raise ValueError("Invalid ecm type. Choose 'linear', 'logistic', or 'random_forest'.")
+
+
+        if is_torch_model:
+            best_val_loss = float('inf')  # Initialize best validation loss as infinity
+            patience = 10  # number of epochs to wait without improvement
+            counter = 0
+
+            for epoch in range(100):
+                modelerr.train()
+                total_loss = 0
+                for xb, yb in train_loader:
+                    optimizer.zero_grad()
+                    # print(xb.shape)
+                    # exit()
+                    if self.args.include_x0:
+                        # Extract the first value (x_0) from each sample in the batch
+                        x_0 = xb[:, 0:1, :]  # shape: [64, 1, 14]
+
+                        # Repeat x_0 across all 96 time steps
+                        x_0_repeated = x_0.repeat(1, 96, 1)  # shape: [64, 96, 14]
+
+                        # Concatenate the repeated x_0 with the original xb tensor along the feature axis
+                        xb_modified= torch.cat([xb, x_0_repeated], dim=2)  # shape: [64, 96, 28]
+                        # print("Shape", xb_modified.shape) 
+                        pred = modelerr(xb_modified)
+                    else:
+                        pred = modelerr(xb)
                     loss = loss_fn(pred, yb)
-                    val_loss += loss.item() * xb.size(0)
-            
-            avg_val_loss = val_loss / len(val_loader.dataset)
-            print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
-            
-            # Check if the current validation loss is the best we've seen so far
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
-                print(f"New best validation loss: {best_val_loss:.4f}. Saving model.")
-                torch.save(modelerr.state_dict(), os.path.join(f'./scratch/checkpoints/' + setting, 'checkpoint-modelerr.pth'))
+                    loss.backward()
+                    optimizer.step()
+                    total_loss += loss.item() * xb.size(0)
+                
+                avg_loss = total_loss / len(train_loader.dataset)
+                scheduler.step(avg_loss)
+                print(f"Epoch {epoch+1} - Training Loss: {avg_loss:.4f}")
+                
+                # Validation phase
+                modelerr.eval()
+                val_loss = 0
+                with torch.no_grad():
+                    for xb, yb in val_loader:
+                        if self.args.include_x0:
+                            x_0 = xb[:, 0:1, :]  # shape: [64, 1, 14]
 
-            print("Training complete.")
-        return
+                            # Repeat x_0 across all 96 time steps
+                            x_0_repeated = x_0.repeat(1, 96, 1)  # shape: [64, 96, 14]
+
+                            # Concatenate the repeated x_0 with the original xb tensor along the feature axis
+                            xb_modified= torch.cat([xb, x_0_repeated], dim=2)  # shape: [64, 96, 28]
+                            pred = modelerr(xb_modified)
+                        else:
+                            pred = modelerr(xb)
+                        loss = loss_fn(pred, yb)
+                        val_loss += loss.item() * xb.size(0)
+                
+                avg_val_loss = val_loss / len(val_loader.dataset)
+                print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
+                
+                # Check if the current validation loss is the best we've seen so far
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    counter = 0
+                    print(f"New best validation loss: {best_val_loss:.4f}. Saving model.")
+                    torch.save(modelerr.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-includex0-{self.args.include_x0}.pth'))
+                else:
+                    counter += 1
+                    print(f"No improvement in validation loss. Early stopping counter: {counter}/{patience}")
+                    if counter >= patience:
+                        print("Early stopping triggered.")
+                        break
+
+                print("Training complete.")
+            return
+        else:
+            # Collect all training data
+            train_X, train_Y = [], []
+            for xb, yb in train_loader:
+                train_X.append(xb.cpu().numpy())
+                train_Y.append(yb.cpu().numpy())
+            train_X = np.concatenate(train_X, axis=0)
+            train_Y = np.concatenate(train_Y, axis=0)
+
+            # Fit the random forest model
+            modelerr.fit(train_X, train_Y)
+
+            # Validation
+            val_X, val_Y = [], []
+            for xb, yb in val_loader:
+                val_X.append(xb.cpu().numpy())
+                val_Y.append(yb.cpu().numpy())
+            val_X = np.concatenate(val_X, axis=0)
+            val_Y = np.concatenate(val_Y, axis=0)
+
+            val_pred = modelerr.predict(val_X)
+            val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
+            print(f"RandomForest - Validation Loss: {val_loss:.4f}")
+            save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pkl')
+
+            if not os.path.exists(save_path):
+                print(f"Saving model since no previous model exists.")
+                joblib.dump(modelerr, save_path)
 
 
 
-
-    def test_infer_batch(self, setting, test=0):
+    def test_infer_batch(self, setting, test=0, ecm="linear"):
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -668,17 +810,52 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.args.pred_len = model_pred_len
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'./scratch/checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
         
+        if self.args.include_x0:
+            input_dim=self.args.enc_in*2*2
+        else:
+            input_dim=self.args.enc_in*2
         print('loading modelerr')
-        modelerr = ErrorCorrector(input_dim=self.args.enc_in*2,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
-        modelerr.load_state_dict(torch.load(os.path.join(f'./scratch/checkpoints/' + setting, 'checkpoint-modelerr.pth')))
-        modelerr.eval()  # Set to evaluation mode
+        if ecm == "linear":
+            modelerr = ErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
+            is_torch_model = True
+        elif ecm == "logistic":
+            modelerr = LogisticErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
+            is_torch_model = True
+        elif ecm == "random_forest":
+            modelerr = RandomForestErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in)
+            is_torch_model = False
+        elif ecm == "xgboost":
+            modelerr = XGBoostErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in)
+            is_torch_model = False
+        if ecm == "lstm":
+            modelerr = RNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, rnn_type=ecm, hidden_dim=self.args.err_h).to(self.device)
+            is_torch_model = True
+        elif ecm == "GRU":
+            modelerr = RNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, rnn_type=ecm, hidden_dim=self.args.err_h).to(self.device)
+            is_torch_model = True
+        elif ecm == "CNN":
+            modelerr = CNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
+            is_torch_model = True
+        elif ecm == "TF":
+            modelerr = TransformerErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
+            is_torch_model = True
+        else:
+            raise ValueError("Invalid ecm type. Choose 'linear' or 'logistic'.")
+        
+        if is_torch_model:
+            modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-includex0-{self.args.include_x0}.pth')))
+            modelerr.eval()  # Set to evaluation mode
+        else:
+            load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pkl')
+            modelerr = joblib.load(load_path)
+
         print("data prediction length: ", data_pred_len)
 
         preds = []
         trues = []
-        folder_path = f'./scratch/infer_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -728,8 +905,22 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     
                     if self.args.errcor_coef>0:
                         meinput = torch.cat([batch_x, outputs[:, -self.args.pred_len:, f_dim:]], dim=-1)
+                        if self.args.include_x0:
+                            x_0 = meinput[:, 0:1, :]
+                            # Repeat x_0 across all 96 time steps
+                            x_0_repeated = x_0.repeat(1, 96, 1)
+                            # Concatenate the repeated x_0 with the original xb tensor along the feature axis
+                            meinput= torch.cat([meinput, x_0_repeated], dim=2)
+
+                        # print("meinput shape", meinput.shape)   
+                        # exit()
                         # meinput = outputs[:, -self.args.pred_len:, f_dim:]
-                        perr = modelerr(meinput)
+                        if is_torch_model:
+                            perr = modelerr(meinput)
+                        else:
+                            perr = modelerr.predict(meinput.cpu().numpy())
+                            perr = torch.tensor(perr).to(self.device)
+
                         outputs_pred = outputs + perr*self.args.errcor_coef
                     outputs = outputs[:, -self.args.pred_len:, :]
 
@@ -795,7 +986,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'./scratch/infer_results/' + setting + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         
@@ -832,29 +1023,3 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return
 
 
-class ErrorCorrector(nn.Module):
-    def __init__(self, input_dim,T, output_dim, hidden_dim=32, dropout=0.5):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(T, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, T),
-            nn.Dropout(dropout)
-        )
-        self.model2 = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, output_dim),
-            nn.Dropout(dropout),
-
-        )
-        self.output_dim = output_dim
-
-    def forward(self, x):  # x: (B, T, D)
-        B, T, D = x.shape
-        x = x.permute(0, 2, 1)        # (B, D, T)
-        x = x.reshape(B * D, T)       # (B*D, T)
-        out = self.model(x)          # (B*D, T)
-        out = out.view(B, D, T)       # (B, D, T)
-
-        return self.model2(out.permute(0, 2, 1))   # back to (B, T, D)
