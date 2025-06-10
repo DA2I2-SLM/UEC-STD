@@ -226,10 +226,10 @@ class XGBoostErrorCorrector:
             subsample=subsample,
             n_jobs=-1,
             verbosity=2,
-            early_stopping_rounds=early_stopping_rounds,
             tree_method='gpu_hist',  # Use GPU-accelerated method
             device='cuda'  # Use the first available CUDA GPU
         )
+        
     def fit(self, X, y):
         """
         X: (B, T, D) input features

@@ -1,4 +1,4 @@
-#export CUDA_VISIBLE_DEVICES=0
+export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeMixer
 
@@ -15,7 +15,7 @@ batch_size=8
 python -u run.py \
   --task_name long_term_forecast \
   --is_training $1 \
-  --root_path ./scratch/dataset/ \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
   --data_path traffic.csv \
   --model_id Traffic_$seq_len'_'$3 \
   --model $model_name \
@@ -46,8 +46,7 @@ python -u run.py \
 # python -u run.py \
 #   --task_name long_term_forecast \
 #   --is_training 1 \
-#   --root_path ./scratch/dataset/ \
-#   --data_path traffic.csv \
+#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path traffic.csv \
 #   --model_id Traffic_$seq_len'_'192 \
 #   --model $model_name \
 #   --data custom \
@@ -74,8 +73,7 @@ python -u run.py \
 # python -u run.py \
 #   --task_name long_term_forecast \
 #   --is_training 1 \
-#   --root_path ./scratch/dataset/ \
-#   --data_path traffic.csv \
+#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path traffic.csv \
 #   --model_id Traffic_$seq_len'_'336 \
 #   --model $model_name \
 #   --data custom \
@@ -102,8 +100,7 @@ python -u run.py \
 # python -u run.py \
 #   --task_name long_term_forecast \
 #   --is_training 1 \
-#   --root_path ./scratch/dataset/ \
-#   --data_path traffic.csv \
+#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path traffic.csv \
 #   --model_id Traffic_$seq_len'_'720 \
 #   --model $model_name \
 #   --data custom \

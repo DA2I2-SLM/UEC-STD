@@ -47,7 +47,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return criterion
  
 
-    def vali(self, vali_data, vali_loader, criterion):
+    def vali(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model=None):
         total_loss = []
         self.model.eval()
         with torch.no_grad():
@@ -74,13 +74,39 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 pred = outputs.detach().cpu()
                 true = batch_y.detach().cpu()
 
-                loss = criterion(pred, true)
+                if error_coeff == 0:
+                    loss = criterion(pred, true)
+                else:
+                    f_dim = -1 if self.args.features == 'MS' else 0
+
+                    meinput = torch.cat([batch_x, outputs[:, -self.args.pred_len:, f_dim:]], dim=-1)
+                    if self.args.include_x0:
+                        x_0 = meinput[:, 0:1, :]
+                        # Repeat x_0 across all 96 time steps
+                        x_0_repeated = x_0.repeat(1, 96, 1)
+                        # Concatenate the repeated x_0 with the original xb tensor along the feature axis
+                        meinput= torch.cat([meinput, x_0_repeated], dim=2)
+
+                    # print("meinput shape", meinput.shape)   
+                    # exit()
+                    # meinput = outputs[:, -self.args.pred_len:, f_dim:]
+                    if is_torch_model:
+                        perr = error_model(meinput)
+
+                    else:
+                        perr = error_model.predict(meinput.cpu().numpy())
+                        perr = torch.tensor(perr).to(self.device)
+
+                    outputs_pred = outputs + perr*error_coeff
+
+                    loss = criterion(outputs_pred.to("cpu"), true)
 
                 total_loss.append(loss)
         total_loss = np.average(total_loss)
         self.model.train()
         return total_loss
 
+    
     def train(self, setting):
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
@@ -283,7 +309,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + "-" + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -383,7 +409,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + '-' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         
@@ -418,7 +444,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return
 
-    def train_infer_batch(self, setting, test=0, ecm="linear"):
+    def train_infer_batch(self, setting, test=0, ecm="linear", error_flags=None):
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -439,7 +465,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -554,7 +580,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         
@@ -695,6 +721,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             best_val_loss = float('inf')  # Initialize best validation loss as infinity
             patience = 10  # number of epochs to wait without improvement
             counter = 0
+            best_model_err = None
 
             for epoch in range(100):
                 modelerr.train()
@@ -751,20 +778,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
                     counter = 0
-                    print(f"New best validation loss: {best_val_loss:.4f}. Saving model.")
-                    torch.save(modelerr.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-includex0-{self.args.include_x0}.pth'))
-                else:
-                    counter += 1
-                    print(f"No improvement in validation loss. Early stopping counter: {counter}/{patience}")
-                    if counter >= patience:
-                        print("Early stopping triggered.")
-                        break
-
+                    print(f"New best validation loss: {best_val_loss:.4f}.")
+                    best_model_err = modelerr
+                    # torch.save(modelerr.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-includex0-{self.args.include_x0}.pth'))
+                # else:
+                #     counter += 1
+                #     print(f"No improvement in validation loss. Early stopping counter: {counter}/{patience}")
+                #     if counter >= patience:
+                #         print("Early stopping triggered.")
+                #         break
                 print("Training complete.")
-            return
+
         else:
             # Collect all training data
             train_X, train_Y = [], []
+            if self.args.include_x0:
+                print("Not yet immplemented for Random Forest")
+                exit()
             for xb, yb in train_loader:
                 train_X.append(xb.cpu().numpy())
                 train_Y.append(yb.cpu().numpy())
@@ -785,15 +815,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             val_pred = modelerr.predict(val_X)
             val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
             print(f"RandomForest - Validation Loss: {val_loss:.4f}")
-            save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pkl')
+            best_model_err = modelerr
+                    
+        criterion = self._select_criterion()
+        vali_data, vali_loader = self._get_data(flag='train')
+        best_i = 0
+        best_val_loss = float('inf')  # Initialize best validation loss as infinity
+        print("Begin searching for best error coefficient")
+        for i in error_flags:
+            avg_val_loss = self.vali(vali_data, vali_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model=best_model_err)
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                best_i = i
+                print(f"New best validation loss: {best_val_loss:.4f} with coef {i}.")
+
+        if is_torch_model:
+            torch.save(best_model_err.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-{best_i}.pth'))
+        else:
+            save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-{best_i}.pkl')
 
             if not os.path.exists(save_path):
                 print(f"Saving model since no previous model exists.")
-                joblib.dump(modelerr, save_path)
+                joblib.dump(best_model_err, save_path)
 
-
-
-    def test_infer_batch(self, setting, test=0, ecm="linear"):
+    def test_infer_batch(self, setting, test=0, ecm="linear", error_flags=None):
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -806,7 +851,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         # setting = "long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0"
         test_data, test_loader = self._get_data(flag='test')
         data_pred_len =self.args.pred_len
-        num_ar = math.ceil(data_pred_len//model_pred_len)
+        num_ar = math.ceil(data_pred_len/model_pred_len)
         self.args.pred_len = model_pred_len
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
@@ -816,6 +861,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             input_dim=self.args.enc_in*2*2
         else:
             input_dim=self.args.enc_in*2
+        # exit()
         print('loading modelerr')
         if ecm == "linear":
             modelerr = ErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
@@ -829,7 +875,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         elif ecm == "xgboost":
             modelerr = XGBoostErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in)
             is_torch_model = False
-        if ecm == "lstm":
+        elif ecm == "lstm":
             modelerr = RNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, rnn_type=ecm, hidden_dim=self.args.err_h).to(self.device)
             is_torch_model = True
         elif ecm == "GRU":
@@ -845,7 +891,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             raise ValueError("Invalid ecm type. Choose 'linear' or 'logistic'.")
         
         if is_torch_model:
-            modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-includex0-{self.args.include_x0}.pth')))
+            modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pth')))
             modelerr.eval()  # Set to evaluation mode
         else:
             load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pkl')
@@ -855,7 +901,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -871,7 +917,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # print(obatch_y.shape)
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 obatch_y_mark = batch_y_mark.float().to(self.device)
-
+                opreds = []
+                otrues = []
                 for j in range(num_ar):
                     batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
                     batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
@@ -950,8 +997,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     # print(true.shape)
                     # print("--")
                    
-                    preds.append(pred)
-                    trues.append(true)
+                    opreds.append(pred)
+                    otrues.append(true)
                     if i % 10 == 0:
                         input =  batch_x[:,:,:].detach().cpu().numpy()
                         oinput = oinput.detach().cpu().numpy()
@@ -977,7 +1024,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     oinput = vbatch_y
                     if i == 20000:
                         break
-        
+                opreds = np.concatenate(opreds, axis=1)
+                otrues = np.concatenate(otrues, axis=1)
+
+                opreds = opreds[:,:data_pred_len,:]
+                otrues = otrues[:,:data_pred_len,:]
+                
+                preds.append(opreds)
+                trues.append(otrues)        
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
         print('test shape:', preds.shape, trues.shape)
@@ -986,7 +1040,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'includex0_{self.args.include_x0}_' + ecm + '/'
+        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         

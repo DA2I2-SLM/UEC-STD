@@ -46,7 +46,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Compute average MSE and MAE from result files.")
     parser.add_argument("--dir", type=str, default="/scratch/s223669184/project_data/Grant25/" \
     "TimeSeriesECM/infer_results/" \
-    "long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0", help="Directory containing result files (default: current dir)")
+    "long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0-linear", help="Directory containing result files (default: current dir)")
     parser.add_argument("--Lrange", type=str, default="0,1000", help="range of L")
     print("READ RESULTS>>>>>")
     args = parser.parse_args()

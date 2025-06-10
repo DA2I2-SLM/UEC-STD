@@ -22,6 +22,11 @@ if __name__ == '__main__':
 
     def str_to_bool(value):
         return bool(strtobool(value))
+    
+
+    def parse_arg_list(s):
+        return [eval(x.strip()) for x in s.split(',') if x.strip()]
+
 
     # basic config
     parser.add_argument('--task_name', type=str, required=True, default='long_term_forecast',
@@ -143,7 +148,9 @@ if __name__ == '__main__':
     parser.add_argument('--discdtw', default=False, action="store_true",
                         help="Discrimitive DTW warp preset augmentation")
     parser.add_argument('--ecm_model', type=str, default='linear', help='Error Corrector Model')
-    parser.add_argument('--include_x0', type=str_to_bool, default=True, help="Using x_0 as input to the ECM")
+    parser.add_argument('--include_x0', type=str_to_bool, default=False, help="Using x_0 as input to the ECM")
+    parser.add_argument('--error_flags', type=str, required=False,
+help='Comma-separated error model flags (0, 0.5, 1)', default="0.1,0.3,0.5,0.7,1")
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
 
     # TimeXer
@@ -303,7 +310,10 @@ if __name__ == '__main__':
                 args.des, 
                 ii)
         print('>>>>>>>training infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.train_infer_batch(setting, test=1, ecm=args.ecm_model)
+        
+        error_flags = parse_arg_list(args.error_flags)
+
+        exp.train_infer_batch(setting, test=1, ecm=args.ecm_model, error_flags=error_flags)
         if args.gpu_type == 'mps':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':

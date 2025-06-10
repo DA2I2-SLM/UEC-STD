@@ -5,7 +5,7 @@ model_name=TimesNet
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./scratch/dataset/ \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
   --data_path ETTm2.csv \
   --model_id ETTm2_96_96 \
   --model $model_name \
@@ -29,9 +29,8 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./scratch/dataset/ \
-  --data_path ETTm2.csv \
-  --model_id ETTm2_96_192 \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTm2.csv \  --model_id ETTm2_96_192 \
   --model $model_name \
   --data ETTm2 \
   --features M \
@@ -54,9 +53,8 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./scratch/dataset/ \
-  --data_path ETTm2.csv \
-  --model_id ETTm2_96_336 \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTm2.csv \  --model_id ETTm2_96_336 \
   --model $model_name \
   --data ETTm2 \
   --features M \
@@ -78,9 +76,8 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path ./scratch/dataset/ \
-  --data_path ETTm2.csv \
-  --model_id ETTm2_96_720 \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTm2.csv \  --model_id ETTm2_96_720 \
   --model $model_name \
   --data ETTm2 \
   --features M \

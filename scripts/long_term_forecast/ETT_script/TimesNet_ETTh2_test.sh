@@ -5,8 +5,7 @@ model_name=TimesNet
 python -u run.py \
   --task_name long_term_forecast \
   --is_training $1 \
-  --root_path ./scratch/dataset/ \
-  --data_path ETTh2.csv \
+   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path ETTh2.csv \
   --model_id ETTh2_96_$3 \
   --model $model_name \
   --data ETTh2 \
