@@ -18,6 +18,8 @@ parser.add_argument('--model', type=str, required=True, default="TimeMixer")
 parser.add_argument('--ecm', type=str, required=True, default="linear")
 parser.add_argument('--seasonal_trend', type=str_to_bool, 
                      help='Enable seasonal and trend decomposition', default="False")
+parser.add_argument('--season_coef', type=float, default=0.5, help="weight of seasonal interpolation")
+parser.add_argument('--trend_coef', type=float, default=0.5, help="weight of trend interpolation")
 args = parser.parse_args()
 
 pred_lengths = parse_arg_list(args.pred_lengths)

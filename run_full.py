@@ -26,6 +26,8 @@ parser.add_argument('--ecm', type=str, required=True,
 parser.add_argument('--step', type=int, default=1)
 parser.add_argument('--seasonal_trend', type=str_to_bool, 
                      help='Enable seasonal and trend decomposition', default="False")
+parser.add_argument('--season_coef', type=float, default=0.5, help="weight of seasonal interpolation")
+parser.add_argument('--trend_coef', type=float, default=0.5, help="weight of trend interpolation")
 
 args = parser.parse_args()
 
@@ -139,7 +141,7 @@ else:
                     continue
                 for ecm in ecms:
                     for pred_len in pred_lengths:
-                        cmd = f"bash {bash_script} 5 1 {pred_lengths_train} 1 {ecm}"
+                        cmd = f"bash {bash_script} 5 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
                         print(f"Running: {cmd}")
                         os.system(cmd)
     elif args.step == 3:
@@ -157,6 +159,6 @@ else:
                 for ecm in ecms:
                     for pred_len in pred_lengths:
                         for err_flag in error_model:
-                            cmd = f"bash {bash_script} 6 1 {pred_len} {err_flag} {ecm}"
+                            cmd = f"bash {bash_script} 6 1 {pred_len} {err_flag} {ecm} {args.season_coef} {args.trend_coef}"
                             print(f"Running: {cmd}")
                             os.system(cmd)

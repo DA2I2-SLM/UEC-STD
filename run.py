@@ -154,7 +154,7 @@ if __name__ == '__main__':
                         help='Comma-separated error model flags (0, 0.5, 1)', default="0.1,0.3,0.5,0.7,1")
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
     parser.add_argument('--wandb', type=str_to_bool, 
-                     help='Whether to log to wandb?', default="True")
+                     help='Whether to log to wandb?', default="False")
 
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
