@@ -43,6 +43,8 @@ python -u run.py \
   --errcor_coef $4 \
   --err_h 32 \
   --ecm_model $5\
+  --season_coef $6 \
+  --trend_coef $7 \
 
 
 # python -u run.py \

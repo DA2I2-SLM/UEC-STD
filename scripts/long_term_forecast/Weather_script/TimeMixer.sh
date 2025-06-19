@@ -105,7 +105,7 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\\
+   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
   --data_path weather.csv \
   --model_id weather_96_720 \
   --model $model_name \

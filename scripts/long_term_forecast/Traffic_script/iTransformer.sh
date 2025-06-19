@@ -1,6 +1,6 @@
 export CUDA_VISIBLE_DEVICES=0
 
-model_name=TimeMixer
+model_name=iTransformer
 
 seq_len=96
 e_layers=3

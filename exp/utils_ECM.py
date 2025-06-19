@@ -2,9 +2,73 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
+
 from sklearn.ensemble import RandomForestRegressor
 import xgboost as xgb
 
+def create_error_corrector(ecm, input_dim, T, output_dim, hidden_dim, device):
+    """
+    Create error corrector model and training components based on ecm type.
+
+    Args:
+        ecm (str): Type of error corrector model.
+        input_dim (int): Input feature dimension.
+        T (int): Time steps (sequence length).
+        output_dim (int): Output feature dimension.
+        hidden_dim (int): Hidden layer dimension.
+        device (torch.device): Device to place the model on.
+
+    Returns:
+        modelerr: error corrector model instance.
+        optimizer: optimizer (None if not applicable).
+        loss_fn: loss function (None if not applicable).
+        scheduler: learning rate scheduler (None if not applicable).
+        is_torch_model: bool indicating if model is a PyTorch model.
+    """
+
+    is_torch_model = True
+    optimizer = None
+    loss_fn = None
+    scheduler = None
+
+    if ecm == "linear":
+        modelerr = ErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim, hidden_dim=hidden_dim).to(device)
+
+    elif ecm == "logistic":
+        modelerr = LogisticErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim, hidden_dim=hidden_dim).to(device)
+
+    elif ecm == "random_forest":
+        modelerr = RandomForestErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim)
+        is_torch_model = False
+        return modelerr, optimizer, loss_fn, scheduler, is_torch_model
+
+    elif ecm == "xgboost":
+        modelerr = XGBoostErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim)
+        is_torch_model = False
+        return modelerr, optimizer, loss_fn, scheduler, is_torch_model
+
+    elif ecm in ["lstm", "GRU"]:
+        modelerr = RNNErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim,
+                                    hidden_dim=hidden_dim, rnn_type=ecm).to(device)
+
+    elif ecm == "CNN":
+        modelerr = CNNErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim,
+                                    hidden_dim=hidden_dim).to(device)
+
+    elif ecm == "TF":
+        modelerr = TransformerErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim,
+                                            hidden_dim=hidden_dim).to(device)
+
+    else:
+        raise ValueError("Invalid ecm type. Choose from: 'linear', 'logistic', 'random_forest', 'xgboost', 'lstm', 'GRU', 'CNN', 'TF'.")
+
+    # Setup optimizer, loss, scheduler for PyTorch models
+    optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
+    loss_fn = nn.SmoothL1Loss()
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
+
+    return modelerr, optimizer, loss_fn, scheduler, is_torch_model
 
 ##########################################################DL Model###############################
 
@@ -258,3 +322,15 @@ class XGBoostErrorCorrector:
         X_flat = X.reshape(B, -1)
         y_pred_flat = self.model.predict(X_flat)  # (B, T * output_dim)
         return y_pred_flat.reshape(B, T, self.output_dim)
+
+def moving_avg(x, kernel_size=25):
+    pad = (kernel_size - 1) // 2
+    filt = torch.ones(1, 1, kernel_size, device=x.device) / kernel_size
+    # assume x is [..., T], so we fold channels into batch
+    b, t, c = x.shape
+    x2 = x.permute(0,2,1).reshape(b*c, 1, t)           # [B*C,1,T]
+    trend = F.conv1d(x2, filt, padding=pad).reshape(b, c, t).permute(0,2,1)
+    return trend
+
+
+

@@ -7,8 +7,10 @@ import time
 import warnings
 import numpy as np
 import math
+import random
 
 from tqdm import tqdm
+import wandb
 
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
@@ -16,7 +18,7 @@ from utils.tools import EarlyStopping, adjust_learning_rate, visual, visualm
 from utils.metrics import metric
 from utils.dtw_metric import dtw, accelerated_dtw
 from utils.augmentation import run_augmentation, run_augmentation_single
-from .utils_ECM import ErrorCorrector, LogisticErrorCorrector, RandomForestErrorCorrector, XGBoostErrorCorrector, RNNErrorCorrector, CNNErrorCorrector, TransformerErrorCorrector
+from .utils_ECM import moving_avg, create_error_corrector
 
 warnings.filterwarnings('ignore')
 
@@ -80,16 +82,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     f_dim = -1 if self.args.features == 'MS' else 0
 
                     meinput = torch.cat([batch_x, outputs[:, -self.args.pred_len:, f_dim:]], dim=-1)
-                    if self.args.include_x0:
-                        x_0 = meinput[:, 0:1, :]
-                        # Repeat x_0 across all 96 time steps
-                        x_0_repeated = x_0.repeat(1, 96, 1)
-                        # Concatenate the repeated x_0 with the original xb tensor along the feature axis
-                        meinput= torch.cat([meinput, x_0_repeated], dim=2)
 
-                    # print("meinput shape", meinput.shape)   
-                    # exit()
-                    # meinput = outputs[:, -self.args.pred_len:, f_dim:]
                     if is_torch_model:
                         perr = error_model(meinput)
 
@@ -386,10 +379,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     pds = []
                     gtps = []
                     pdps = []
-                    # print(input.shape)
-                    # print(pred.shape)
-                    # print(oinput.shape)
-                    # print(true.shape)
+
                     for ii in range(7):
                         gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                         gts.append(gt)
@@ -444,7 +434,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return
 
-    def train_infer_batch(self, setting, test=0, ecm="linear", error_flags=None):
+    def train_infer_batch(self, setting, test=0, ecm="linear", error_flags=None, seasonal_trend=False):
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -452,9 +442,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         setting_components[11] = "pl"+str(model_pred_len)
         setting = "_".join(setting_components)
         print(setting)
-        # setting = "long_term_forecast_ETTh1_96_96_TimesNet_ETTh1_ftM_sl96_ll48_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0"
-        # setting = "long_term_forecast_ETTh2_96_96_TimesNet_ETTh2_ftM_sl96_ll0_pl96_dm32_nh8_el2_dl1_df32_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0"
-        # setting = "long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0"
+
         test_data, test_loader = self._get_data(flag='val')
         data_pred_len =self.args.pred_len
         num_ar = math.ceil(data_pred_len//model_pred_len)
@@ -470,7 +458,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             os.makedirs(folder_path)
 
         self.model.eval()
-        poses = []
         correction_inputs = []
         correction_targets = []
         with torch.no_grad():
@@ -491,14 +478,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         oinput = batch_x
                     else:
                         enc_inp =  pred_y
-                       
-                            
 
                         # enc_inp = torch.cat([enc_inptp_gt,enc_inptd], dim=2)
                     batch_x = enc_inp #Autoregression
                     
-                    # print(batch_x.shape)
-                    # print(enc_inp.shape)
                     # decoder input
                     dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                     dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
@@ -523,7 +506,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                     batch_x_mark = batch_y_mark
                     batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
-                    otrue = batch_y[:, :, f_dim:]
                     vbatch_y = batch_y[:, :, f_dim:]
                     outputs = outputs.detach().cpu().numpy()
                     batch_y = batch_y.detach().cpu().numpy()
@@ -558,10 +540,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         pds = []
                         gtps = []
                         pdps = []
-                        # print(input.shape)
-                        # print(pred.shape)
-                        # print(oinput.shape)
-                        # print(true.shape)
+
                         for ii in range(7):
                             gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                             gts.append(gt)
@@ -631,91 +610,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
 
-        if self.args.include_x0:
-            input_dim=X.shape[-1] * 2
-        else:
-            input_dim=X.shape[-1]
-
-        if ecm == "linear":
-            modelerr = ErrorCorrector(input_dim=input_dim,
-                                    T=X.shape[1], 
-                                    output_dim=Y.shape[-1],
-                                    hidden_dim=self.args.err_h).to(self.device)
-            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-            loss_fn = nn.SmoothL1Loss()
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
-            is_torch_model = True
-
-        elif ecm == "logistic":
-            modelerr = LogisticErrorCorrector(input_dim=input_dim,
-                                            T=X.shape[1], 
-                                            output_dim=Y.shape[-1],
-                                            hidden_dim=self.args.err_h).to(self.device)
-            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-            loss_fn = nn.SmoothL1Loss()
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
-            is_torch_model = True
-
-        elif ecm == "random_forest":
-            modelerr = RandomForestErrorCorrector(input_dim=input_dim,
-                                                T=X.shape[1], 
-                                                output_dim=Y.shape[-1],
-                                                )
-            is_torch_model = False
-
-        elif ecm == "xgboost":
-            modelerr = XGBoostErrorCorrector(input_dim=input_dim,
-                                            T=X.shape[1], 
-                                            output_dim=Y.shape[-1],
-                                            )
-            is_torch_model = False
-        
-        elif ecm == "lstm":
-            modelerr = RNNErrorCorrector(input_dim=input_dim,
-                                        T=X.shape[1], 
-                                        output_dim=Y.shape[-1],
-                                        hidden_dim=self.args.err_h,
-                                        rnn_type=ecm).to(self.device)
-            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-            loss_fn = nn.SmoothL1Loss()
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
-            is_torch_model = True
-        
-        elif ecm == "GRU":
-            modelerr = RNNErrorCorrector(input_dim=input_dim,
-                                        T=X.shape[1], 
-                                        output_dim=Y.shape[-1],
-                                        hidden_dim=self.args.err_h,
-                                        rnn_type=ecm).to(self.device)
-            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-            loss_fn = nn.SmoothL1Loss()
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
-            is_torch_model = True
-        
-        elif ecm == "CNN":
-            modelerr = CNNErrorCorrector(input_dim=input_dim,
-                                        T=X.shape[1], 
-                                        output_dim=Y.shape[-1],
-                                        hidden_dim=self.args.err_h,
-                                        ).to(self.device)
-            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-            loss_fn = nn.SmoothL1Loss()
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
-            is_torch_model = True
-        
-        elif ecm == "TF":
-            modelerr = TransformerErrorCorrector(input_dim=input_dim,
-                                                T=X.shape[1], 
-                                                output_dim=Y.shape[-1],
-                                                hidden_dim=self.args.err_h,
-                                                ).to(self.device)
-            optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-            loss_fn = nn.SmoothL1Loss()
-            scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
-            is_torch_model = True
-        else:
-            raise ValueError("Invalid ecm type. Choose 'linear', 'logistic', or 'random_forest'.")
-
+        input_dim=X.shape[-1]
+        modelerr, optimizer, loss_fn, scheduler, is_torch_model = create_error_corrector(
+                                                                                            ecm=ecm,
+                                                                                            input_dim=input_dim,
+                                                                                            T=X.shape[1],
+                                                                                            output_dim=Y.shape[-1],
+                                                                                            hidden_dim=self.args.err_h,
+                                                                                            device=self.device
+                                                                                        )
 
         if is_torch_model:
             best_val_loss = float('inf')  # Initialize best validation loss as infinity
@@ -730,19 +633,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     optimizer.zero_grad()
                     # print(xb.shape)
                     # exit()
-                    if self.args.include_x0:
-                        # Extract the first value (x_0) from each sample in the batch
-                        x_0 = xb[:, 0:1, :]  # shape: [64, 1, 14]
-
-                        # Repeat x_0 across all 96 time steps
-                        x_0_repeated = x_0.repeat(1, 96, 1)  # shape: [64, 96, 14]
-
-                        # Concatenate the repeated x_0 with the original xb tensor along the feature axis
-                        xb_modified= torch.cat([xb, x_0_repeated], dim=2)  # shape: [64, 96, 28]
-                        # print("Shape", xb_modified.shape) 
-                        pred = modelerr(xb_modified)
-                    else:
-                        pred = modelerr(xb)
+                    pred = modelerr(xb)
                     loss = loss_fn(pred, yb)
                     loss.backward()
                     optimizer.step()
@@ -757,17 +648,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 val_loss = 0
                 with torch.no_grad():
                     for xb, yb in val_loader:
-                        if self.args.include_x0:
-                            x_0 = xb[:, 0:1, :]  # shape: [64, 1, 14]
-
-                            # Repeat x_0 across all 96 time steps
-                            x_0_repeated = x_0.repeat(1, 96, 1)  # shape: [64, 96, 14]
-
-                            # Concatenate the repeated x_0 with the original xb tensor along the feature axis
-                            xb_modified= torch.cat([xb, x_0_repeated], dim=2)  # shape: [64, 96, 28]
-                            pred = modelerr(xb_modified)
-                        else:
-                            pred = modelerr(xb)
+                        pred = modelerr(xb)
                         loss = loss_fn(pred, yb)
                         val_loss += loss.item() * xb.size(0)
                 
@@ -777,24 +658,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # Check if the current validation loss is the best we've seen so far
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
-                    counter = 0
-                    print(f"New best validation loss: {best_val_loss:.4f}.")
+                    # print(f"New best validation loss: {best_val_loss:.4f}.")
                     best_model_err = modelerr
-                    # torch.save(modelerr.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-includex0-{self.args.include_x0}.pth'))
-                # else:
-                #     counter += 1
-                #     print(f"No improvement in validation loss. Early stopping counter: {counter}/{patience}")
-                #     if counter >= patience:
-                #         print("Early stopping triggered.")
-                #         break
                 print("Training complete.")
 
         else:
             # Collect all training data
             train_X, train_Y = [], []
-            if self.args.include_x0:
-                print("Not yet immplemented for Random Forest")
-                exit()
             for xb, yb in train_loader:
                 train_X.append(xb.cpu().numpy())
                 train_Y.append(yb.cpu().numpy())
@@ -822,6 +692,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         best_i = 0
         best_val_loss = float('inf')  # Initialize best validation loss as infinity
         print("Begin searching for best error coefficient")
+
         for i in error_flags:
             avg_val_loss = self.vali(vali_data, vali_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model=best_model_err)
             if avg_val_loss < best_val_loss:
@@ -830,13 +701,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 print(f"New best validation loss: {best_val_loss:.4f} with coef {i}.")
 
         if is_torch_model:
-            torch.save(best_model_err.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-{best_i}.pth'))
+            torch.save(best_model_err.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}.pth'))
         else:
-            save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-{best_i}.pkl')
+            save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}.pkl')
 
             if not os.path.exists(save_path):
                 print(f"Saving model since no previous model exists.")
                 joblib.dump(best_model_err, save_path)
+
+
 
     def test_infer_batch(self, setting, test=0, ecm="linear", error_flags=None):
         model_pred_len = self.args.seq_len
@@ -846,9 +719,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         setting_components[11] = "pl"+str(model_pred_len)
         setting = "_".join(setting_components)
         print(setting)
-        # setting = "long_term_forecast_ETTh1_96_96_TimesNet_ETTh1_ftM_sl96_ll48_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0"
-        # setting = "long_term_forecast_ETTh2_96_96_TimesNet_ETTh2_ftM_sl96_ll0_pl96_dm32_nh8_el2_dl1_df32_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0"
-        # setting = "long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0"
+
         test_data, test_loader = self._get_data(flag='test')
         data_pred_len =self.args.pred_len
         num_ar = math.ceil(data_pred_len/model_pred_len)
@@ -857,45 +728,29 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('loading model')
         self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
         
-        if self.args.include_x0:
-            input_dim=self.args.enc_in*2*2
-        else:
-            input_dim=self.args.enc_in*2
+
+        input_dim=self.args.enc_in*2
         # exit()
         print('loading modelerr')
-        if ecm == "linear":
-            modelerr = ErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
-            is_torch_model = True
-        elif ecm == "logistic":
-            modelerr = LogisticErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
-            is_torch_model = True
-        elif ecm == "random_forest":
-            modelerr = RandomForestErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in)
-            is_torch_model = False
-        elif ecm == "xgboost":
-            modelerr = XGBoostErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in)
-            is_torch_model = False
-        elif ecm == "lstm":
-            modelerr = RNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, rnn_type=ecm, hidden_dim=self.args.err_h).to(self.device)
-            is_torch_model = True
-        elif ecm == "GRU":
-            modelerr = RNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, rnn_type=ecm, hidden_dim=self.args.err_h).to(self.device)
-            is_torch_model = True
-        elif ecm == "CNN":
-            modelerr = CNNErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
-            is_torch_model = True
-        elif ecm == "TF":
-            modelerr = TransformerErrorCorrector(input_dim=input_dim,T=model_pred_len, output_dim=self.args.enc_in, hidden_dim=self.args.err_h).to(self.device)
-            is_torch_model = True
-        else:
-            raise ValueError("Invalid ecm type. Choose 'linear' or 'logistic'.")
-        
-        if is_torch_model:
-            modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pth')))
-            modelerr.eval()  # Set to evaluation mode
-        else:
-            load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}.pkl')
-            modelerr = joblib.load(load_path)
+        modelerr, optimizer, loss_fn, scheduler, is_torch_model = create_error_corrector(
+                                                                                    ecm=ecm,
+                                                                                    input_dim=input_dim,
+                                                                                    T=model_pred_len,
+                                                                                    output_dim=self.args.enc_in,
+                                                                                    hidden_dim=self.args.err_h,
+                                                                                    device=self.device
+                                                                                )
+        possible_coeffs = [0, 0.1, 0.3, 0.5, 0.7, 1.0]
+        for coeff in possible_coeffs:
+            try:
+                if is_torch_model:
+                    modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}.pth')))
+                    modelerr.eval()  # Set to evaluation mode
+                else:
+                    load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}.pkl')
+                    modelerr = joblib.load(load_path)
+            except FileNotFoundError:
+                continue
 
         print("data prediction length: ", data_pred_len)
 
@@ -906,9 +761,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             os.makedirs(folder_path)
 
         self.model.eval()
-        poses = []
-        correction_inputs = []
-        correction_targets = []
+
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
                 batch_x = batch_x.float().to(self.device)
@@ -932,9 +785,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                     batch_x = enc_inp #Autoregression
                     
-                    # print(batch_x.shape)
-                    # print(enc_inp.shape)
-                    # decoder input
                     dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                     dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
                     # encoder - decoder
@@ -952,12 +802,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     
                     if self.args.errcor_coef>0:
                         meinput = torch.cat([batch_x, outputs[:, -self.args.pred_len:, f_dim:]], dim=-1)
-                        if self.args.include_x0:
-                            x_0 = meinput[:, 0:1, :]
-                            # Repeat x_0 across all 96 time steps
-                            x_0_repeated = x_0.repeat(1, 96, 1)
-                            # Concatenate the repeated x_0 with the original xb tensor along the feature axis
-                            meinput= torch.cat([meinput, x_0_repeated], dim=2)
 
                         # print("meinput shape", meinput.shape)   
                         # exit()
@@ -1009,12 +853,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                         gts = []
                         pds = []
-                        gtps = []
-                        pdps = []
-                        # print(input.shape)
-                        # print(pred.shape)
-                        # print(oinput.shape)
-                        # print(true.shape)
+
                         for ii in range(7):
                             gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                             gts.append(gt)
@@ -1072,8 +911,630 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
-
-
         return
 
+    def train_infer_batch_with_trend_season(self, setting, test=0, ecm="linear", error_flags=None, seasonal_trend=False):
+        if self.args.wandb is True:
+            run_id = f"run-{random.randint(1000, 9999)}"
+            # Initialize wandb
+            wandb.init(
+                project="timeecm",     
+                name=run_id            
+            )
 
+        model_pred_len = self.args.seq_len
+        setting_components = setting.split("_")
+        print(setting_components)
+        setting_components[5] = str(model_pred_len)
+        setting_components[11] = "pl"+str(model_pred_len)
+        setting = "_".join(setting_components)
+        print(setting)
+      
+        test_data, test_loader = self._get_data(flag='val')
+        data_pred_len =self.args.pred_len
+        num_ar = math.ceil(data_pred_len//model_pred_len)
+        self.args.pred_len = model_pred_len
+        self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
+        print("data prediction length: ", data_pred_len)
+        print('loading model')
+        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+        preds = []
+        trues = []
+        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
+        self.model.eval()
+        correction_inputs = []
+        correction_targets = []
+        with torch.no_grad():
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
+                batch_x = batch_x.float().to(self.device)
+                obatch_y = batch_y.float().to(self.device)
+                # print(batch_x.shape)
+                # print(obatch_y.shape)
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                obatch_y_mark = batch_y_mark.float().to(self.device)
+
+                for j in range(num_ar):
+                    # print(j)
+                    batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+                    batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+                    if j==0:
+                        enc_inp = batch_x
+                        oinput = batch_x
+                    else:
+                        enc_inp =  pred_y
+                       
+                    batch_x = enc_inp #Autoregression
+                    
+                    # decoder input
+                    dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+                    dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                    # encoder - decoder
+                    if self.args.use_amp:
+                        with torch.cuda.amp.autocast():
+                            if self.args.output_attention:
+                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                            else:
+                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    else:
+                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    
+                    outputs = outputs[:,:,:]
+                    
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    outputs = outputs[:, -self.args.pred_len:, :]
+
+                    pred_y = outputs
+                    if self.args.use_ar==0:
+                        pred_y = obatch_y[:, self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+
+                    batch_x_mark = batch_y_mark
+                    batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
+                    vbatch_y = batch_y[:, :, f_dim:]
+                    outputs = outputs.detach().cpu().numpy()
+                    batch_y = batch_y.detach().cpu().numpy()
+                    if test_data.scale and self.args.inverse:
+                        shape = outputs.shape
+                        outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                        batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
+            
+            
+                    outputs = outputs[:, :, f_dim:]
+                    batch_y = batch_y[:, :, f_dim:]
+
+                    pred = outputs[:batch_y.shape[0],:,:]
+                    true = batch_y
+
+                    # Construct seasonal and trend components
+                    torch_pred = torch.tensor(pred).to(self.device)
+                    torch_true = torch.tensor(true).to(self.device)
+
+                    pred_trend = moving_avg(torch_pred, kernel_size=25)
+                    pred_seasonal = torch_pred - pred_trend
+                    
+                    true_trend    = moving_avg(torch_true, kernel_size=25)
+                    true_seasonal = torch_true - true_trend
+                    
+                    pt = pred_trend   [:, -self.args.pred_len:, :]
+                    ps = pred_seasonal[:, -self.args.pred_len:, :]
+
+                    print("Pred shape:", pred.shape, "True shape:", true.shape, 
+                          "Predicted Trend shape:", pt.shape, "Predicted Seasonal shape:", ps.shape)
+                    print("Batch X shape:", batch_x.shape, "Batch Y shape:", batch_y.shape)
+                    
+                    corr_in = torch.cat([
+                                    batch_x,        # historical inputs
+                                    pt,             # predicted trends
+                                    ps,             # predicted seasonal
+                                ], dim=-1)         # => [B, T_enc_or_pred, C_total]
+                    correction_inputs.append(corr_in)
+
+
+                    trend_err    = true_trend[:, -self.args.pred_len:, :] - pt
+                    seasonal_err = true_seasonal[:, -self.args.pred_len:, :] - ps
+
+                    corr_tgt = torch.cat([trend_err, seasonal_err], dim=-1)
+                    correction_targets.append(corr_tgt)
+                    print("correction inputs shape:", corr_in.shape, "correction targets shape:", corr_tgt.shape)
+                
+                    preds.append(pred)
+                    trues.append(true)
+                    if i % 10 == 0:
+                        input =  batch_x[:,:,:].detach().cpu().numpy()
+                        oinput = oinput.detach().cpu().numpy()
+                        if test_data.scale and self.args.inverse:
+                            shape = input.shape
+                            input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                            oinput = test_data.inverse_transform(oinput.reshape(shape[0] * shape[1], -1)).reshape(shape)
+
+                        gts = []
+                        pds = []
+                        gtps = []
+                        pdps = []
+
+                        for ii in range(7):
+                            gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
+                            gts.append(gt)
+                            pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
+                            pds.append(pd)
+                        visualm(gts, pds, os.path.join(folder_path, f"ar{self.args.use_ar}-{i}-{j}.pdf"))
+                    oinput = vbatch_y
+                    if i == 20000:
+                        break
+        
+        preds = np.concatenate(preds, axis=0)
+        trues = np.concatenate(trues, axis=0)
+        print('test shape:', preds.shape, trues.shape)
+        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
+        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
+        print('test shape:', preds.shape, trues.shape)
+
+        # result save
+        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        
+        # dtw calculation
+        if self.args.use_dtw:
+            dtw_list = []
+            manhattan_distance = lambda x, y: np.abs(x - y)
+            for i in range(preds.shape[0]):
+                x = preds[i].reshape(-1,1)
+                y = trues[i].reshape(-1,1)
+                if i % 100 == 0:
+                    print("calculating dtw iter:", i)
+                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
+                dtw_list.append(d)
+            dtw = np.array(dtw_list).mean()
+        else:
+            dtw = -999
+            
+
+        mae, mse, rmse, mape, mspe = metric(preds, trues)
+        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+        f = open(f"result_long_term_forecast.txt", 'w')
+        f.write(setting + "  \n")
+        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+        f.write('\n')
+        f.write('\n')
+        f.close()
+
+        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
+        np.save(folder_path + 'pred.npy', preds)
+        np.save(folder_path + 'true.npy', trues)
+
+
+        X = torch.cat(correction_inputs, dim=0)  # shape: (N, T, D)
+        Y = torch.cat(correction_targets, dim=0)
+        print(X.shape)
+        print(Y.shape)
+        from torch.utils.data import TensorDataset, DataLoader, random_split
+        # Normalize inputs (pred) and targets (error)
+        Y_mean = Y.mean(dim=(0, 1), keepdim=True)
+        Y_std = Y.std(dim=(0, 1), keepdim=True) + 1e-6
+        Y = (Y - Y_mean) / Y_std
+
+        dataset = TensorDataset(X, Y)
+        train_size = int(0.8 * len(dataset))  # 80% for training
+        val_size = len(dataset) - train_size   # 20% for validation
+        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
+        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
+
+        input_dim=X.shape[-1]
+        modelerr, optimizer, loss_fn, scheduler, is_torch_model = create_error_corrector(
+                                                                ecm=ecm,
+                                                                input_dim=input_dim,
+                                                                T=X.shape[1],
+                                                                output_dim=Y.shape[-1],
+                                                                hidden_dim=self.args.err_h,
+                                                                device=self.device
+                                                            )
+
+        if is_torch_model:
+            best_val_loss = float('inf')  # Initialize best validation loss as infinity
+            patience = 10  # number of epochs to wait without improvement
+            counter = 0
+            best_model_err = None
+
+            for epoch in range(100):
+                modelerr.train()
+                total_loss = 0
+                total_loss_trend = 0
+                total_loss_seasonal = 0
+                for xb, yb in train_loader:
+                    optimizer.zero_grad()
+                    
+                    pred = modelerr(xb)
+
+                    trend_pred, seasonal_pred = pred.split(pred.shape[-1] // 2, dim=-1)
+                    trend_true, seasonal_true = yb.split(pred.shape[-1] // 2, dim=-1)
+
+                    loss_trend = loss_fn(trend_pred, trend_true)
+                    loss_seasonal = loss_fn(seasonal_pred, seasonal_true)
+
+                    loss = loss_trend * self.args.season_coef + loss_seasonal * self.args.trend_coef
+
+                    loss.backward()
+                    optimizer.step()
+                    total_loss_trend += loss_trend.item() * xb.size(0)
+                    total_loss_seasonal += loss_seasonal.item() * xb.size(0)
+                    total_loss += loss.item() * xb.size(0)
+
+                avg_loss = total_loss / len(train_loader.dataset)
+                avg_loss_trend = total_loss_trend / len(train_loader.dataset)
+                avg_loss_seasonal = total_loss_seasonal / len(train_loader.dataset)
+
+                scheduler.step(avg_loss)
+                print(f"Epoch {epoch+1} - Training Loss: {avg_loss:.4f}")
+                if self.args.wandb:
+                    wandb.log({
+                        "train/total_loss": avg_loss,
+                        "train/trend_loss": avg_loss_trend,
+                        "train/seasonal_loss": avg_loss_seasonal,
+                        "epoch": epoch + 1
+                    })
+
+                # Validation phase
+                modelerr.eval()
+                val_loss = 0
+                val_loss_trend = 0
+                val_loss_seasonal = 0
+                with torch.no_grad():
+                    for xb, yb in val_loader:
+                        pred = modelerr(xb)
+                        
+                        # Split into trend and seasonal components to log the training loss
+                        trend_pred, seasonal_pred = pred.split(pred.shape[-1] // 2, dim=-1)
+                        trend_true, seasonal_true = yb.split(pred.shape[-1] // 2, dim=-1)
+
+                        loss_trend = loss_fn(trend_pred, trend_true)
+                        loss_seasonal = loss_fn(seasonal_pred, seasonal_true)
+
+                        loss = loss_trend * self.args.season_coef + loss_seasonal * self.args.trend_coef
+
+                        val_loss += loss.item() * xb.size(0)
+                        val_loss_trend += loss_trend.item() * xb.size(0)
+                        val_loss_seasonal += loss_seasonal.item() * xb.size(0)
+                
+                avg_val_loss = val_loss / len(val_loader.dataset)
+                avg_loss_trend = val_loss_trend / len(val_loader.dataset)
+                avg_loss_seasonal = val_loss_seasonal / len(val_loader.dataset)
+                print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
+                if self.args.wandb:
+                    wandb.log({
+                        "val/total_loss": avg_val_loss,
+                        "val/trend_loss": avg_loss_trend,
+                        "val/seasonal_loss": avg_loss_seasonal,
+                        "epoch": epoch + 1
+                    })
+
+                # Check if the current validation loss is the best we've seen so far
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    # print(f"New best validation loss: {best_val_loss:.4f}.")
+                    best_model_err = modelerr
+                print("Training complete.")
+
+        else:
+            # Collect all training data
+            train_X, train_Y = [], []
+            for xb, yb in train_loader:
+                train_X.append(xb.cpu().numpy())
+                train_Y.append(yb.cpu().numpy())
+            train_X = np.concatenate(train_X, axis=0)
+            train_Y = np.concatenate(train_Y, axis=0)
+
+            # Fit the random forest model
+            modelerr.fit(train_X, train_Y)
+
+            # Validation
+            val_X, val_Y = [], []
+            for xb, yb in val_loader:
+                val_X.append(xb.cpu().numpy())
+                val_Y.append(yb.cpu().numpy())
+            val_X = np.concatenate(val_X, axis=0)
+            val_Y = np.concatenate(val_Y, axis=0)
+
+            val_pred = modelerr.predict(val_X)
+            val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
+            print(f"RandomForest - Validation Loss: {val_loss:.4f}")
+            best_model_err = modelerr
+                    
+        criterion = self._select_criterion()
+        vali_data, vali_loader = self._get_data(flag='train')
+        best_i = 0
+        best_val_loss = float('inf')  # Initialize best validation loss as infinity
+        print("Begin searching for best error coefficient")
+        for i in error_flags:
+            avg_val_loss = self.vali_with_seasonal_trend(vali_data, vali_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model=best_model_err)
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                best_i = i
+                print(f"New best validation loss: {best_val_loss:.4f} with coef {i}.")
+
+        if is_torch_model:
+            torch.save(best_model_err.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}_with_season_{self.args.season_coef}_trend_{self.args.trend_coef}.pth'))
+        else:
+            save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}_with_season_{self.args.season_coef}_trend_{self.args.trend_coef}.pkl')
+
+            if not os.path.exists(save_path):
+                joblib.dump(best_model_err, save_path)
+
+    
+
+    def vali_with_seasonal_trend(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model=None):
+        total_loss = []
+        self.model.eval()
+        with torch.no_grad():
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float()
+
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
+
+                # decoder input
+                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                # encoder - decoder
+                if self.args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                else:
+                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+
+                pred = outputs.detach().cpu()
+                true = batch_y.detach().cpu()
+
+                if error_coeff == 0:
+                    loss = criterion(pred, true)
+                else:
+                    f_dim = -1 if self.args.features == 'MS' else 0
+
+                    pred_trend    = moving_avg(outputs, kernel_size=25)       # [B, T, C_total]
+                    pred_seasonal = outputs - pred_trend                      # [B, T, C_total]
+
+                    pt = pred_trend   [:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
+                    ps = pred_seasonal[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
+
+                    meinput = torch.cat([
+                        batch_x,    # [B, pred_len, C_history]
+                        pt,         # [B, pred_len, C]
+                        ps          # [B, pred_len, C]
+                    ], dim=-1)      # → [B, pred_len, C_history + 2*C]
+
+                    if is_torch_model:
+                        perr = error_model(meinput)
+
+                    else:
+                        perr = error_model.predict(meinput.cpu().numpy())
+                        perr = torch.tensor(perr).to(self.device)
+
+                    trend_err_pred, seasonal_err_pred = perr.chunk(2, dim=-1)
+
+                    perr = trend_err_pred + seasonal_err_pred  # [B, pred_len, C]
+
+                    outputs_pred = outputs + perr*error_coeff
+
+                    loss = criterion(outputs_pred.to("cpu"), true)
+
+                total_loss.append(loss)
+        total_loss = np.average(total_loss)
+        self.model.train()
+        return total_loss
+
+    def test_infer_batch_with_trend_season(self, setting, test=0, ecm="linear", error_flags=None):
+        model_pred_len = self.args.seq_len
+        setting_components = setting.split("_")
+        print(setting_components)
+        setting_components[5] = str(model_pred_len)
+        setting_components[11] = "pl"+str(model_pred_len)
+        setting = "_".join(setting_components)
+        print(setting)
+
+        test_data, test_loader = self._get_data(flag='test')
+        data_pred_len =self.args.pred_len
+        num_ar = math.ceil(data_pred_len/model_pred_len)
+        self.args.pred_len = model_pred_len
+        self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
+        print('loading model')
+        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+        
+
+        input_dim=self.args.enc_in*3
+        out_dim = self.args.enc_in*2
+        # exit()
+        print('loading modelerr')
+        modelerr, optimizer, loss_fn, scheduler, is_torch_model = create_error_corrector(
+                                                        ecm=ecm,
+                                                        input_dim=input_dim,
+                                                        T=model_pred_len,
+                                                        output_dim=out_dim,
+                                                        hidden_dim=self.args.err_h,
+                                                        device=self.device
+                                                    )
+        
+        possible_coeffs = [0, 0.1, 0.3, 0.5, 0.7, 1.0]
+        for coeff in possible_coeffs:
+            try:
+                if is_torch_model:
+                    modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}_with_season_{self.args.season_coef}_trend_{self.args.trend_coef}.pth')))
+                    modelerr.eval()  # Set to evaluation mode
+                else:
+                    load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}_with_season_{self.args.season_coef}_trend_{self.args.trend_coef}.pkl')
+                    modelerr = joblib.load(load_path)
+            except FileNotFoundError:
+                continue
+
+        print("data prediction length: ", data_pred_len)
+
+        preds = []
+        trues = []
+        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+
+        self.model.eval()
+
+        with torch.no_grad():
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
+                batch_x = batch_x.float().to(self.device)
+                obatch_y = batch_y.float().to(self.device)
+
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                obatch_y_mark = batch_y_mark.float().to(self.device)
+                opreds = []
+                otrues = []
+                for j in range(num_ar):
+                    batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+                    batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+                    if j==0:
+                        enc_inp = batch_x
+                        oinput = batch_x
+                    else:
+                        enc_inp =  pred_y
+                       
+                    batch_x = enc_inp #Autoregression
+                    
+                    dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+                    dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                    # encoder - decoder
+                    if self.args.use_amp:
+                        with torch.cuda.amp.autocast():
+                            if self.args.output_attention:
+                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
+                            else:
+                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    else:
+                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    
+                    f_dim = -1 if self.args.features == 'MS' else 0
+
+                    
+                    if self.args.errcor_coef>0:
+                        pred_trend    = moving_avg(outputs, kernel_size=25)       # [B, T, C_total]
+                        pred_seasonal = outputs - pred_trend                      # [B, T, C_total]
+
+                        pt = pred_trend   [:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
+                        ps = pred_seasonal[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
+
+                        meinput = torch.cat([
+                            batch_x,    # [B, pred_len, C_history]
+                            pt,         # [B, pred_len, C]
+                            ps          # [B, pred_len, C]
+                        ], dim=-1)      # → [B, pred_len, C_history + 2*C]
+
+
+                        if is_torch_model:
+                            perr = modelerr(meinput)
+                        else:
+                            perr = modelerr.predict(meinput.cpu().numpy())
+                            perr = torch.tensor(perr).to(self.device)
+                        trend_err_pred, seasonal_err_pred = perr.chunk(2, dim=-1)
+
+                        perr = trend_err_pred + seasonal_err_pred  # [B, pred_len, C]
+
+                        outputs_pred = outputs + perr*self.args.errcor_coef
+
+                    outputs = outputs[:, -self.args.pred_len:, :]
+
+                    pred_y = outputs
+                    if self.args.use_ar==0:
+                        pred_y = obatch_y[:, self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+
+                    batch_x_mark = batch_y_mark
+                    batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
+                    vbatch_y = batch_y[:, :, f_dim:]
+                    outputs = outputs.detach().cpu().numpy()
+                    batch_y = batch_y.detach().cpu().numpy()
+                    if test_data.scale and self.args.inverse:
+                        shape = outputs.shape
+                        outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                        batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
+            
+            
+                    outputs = outputs[:, :, f_dim:]
+                    batch_y = batch_y[:, :, f_dim:]
+
+                    pred = outputs[:batch_y.shape[0],:,:]
+                    if self.args.errcor_coef>0:
+                       pred =  outputs_pred[:batch_y.shape[0], -self.args.pred_len:, f_dim:].detach().cpu().numpy()
+                    true = batch_y
+
+                    opreds.append(pred)
+                    otrues.append(true)
+                    if i % 10 == 0:
+                        input =  batch_x[:,:,:].detach().cpu().numpy()
+                        oinput = oinput.detach().cpu().numpy()
+                        if test_data.scale and self.args.inverse:
+                            shape = input.shape
+                            input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                            oinput = test_data.inverse_transform(oinput.reshape(shape[0] * shape[1], -1)).reshape(shape)
+
+                        gts = []
+                        pds = []
+
+                        for ii in range(7):
+                            gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
+                            gts.append(gt)
+                            pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
+                            pds.append(pd)
+                        visualm(gts, pds, os.path.join(folder_path, f"ar{self.args.use_ar}mr{self.args.errcor_coef}-{i}-{j}.pdf"))
+                    oinput = vbatch_y
+                    if i == 20000:
+                        break
+                opreds = np.concatenate(opreds, axis=1)
+                otrues = np.concatenate(otrues, axis=1)
+
+                opreds = opreds[:,:data_pred_len,:]
+                otrues = otrues[:,:data_pred_len,:]
+                
+                preds.append(opreds)
+                trues.append(otrues)        
+        preds = np.concatenate(preds, axis=0)
+        trues = np.concatenate(trues, axis=0)
+        print('test shape:', preds.shape, trues.shape)
+        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
+        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
+        print('test shape:', preds.shape, trues.shape)
+
+        # result save
+        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm + '/'
+        if not os.path.exists(folder_path):
+            os.makedirs(folder_path)
+        
+        # dtw calculation
+        if self.args.use_dtw:
+            dtw_list = []
+            manhattan_distance = lambda x, y: np.abs(x - y)
+            for i in range(preds.shape[0]):
+                x = preds[i].reshape(-1,1)
+                y = trues[i].reshape(-1,1)
+                if i % 100 == 0:
+                    print("calculating dtw iter:", i)
+                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
+                dtw_list.append(d)
+            dtw = np.array(dtw_list).mean()
+        else:
+            dtw = -999
+
+        mae, mse, rmse, mape, mspe = metric(preds, trues)
+        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+        f = open(f"{folder_path}/metrics-{data_pred_len}-{self.args.errcor_coef}.txt", 'w')
+        f.write(setting + "  \n")
+        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+        f.write('\n')
+        f.write('\n')
+        f.close()
+
+        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
+        np.save(folder_path + 'pred.npy', preds)
+        np.save(folder_path + 'true.npy', trues)
+
+        return

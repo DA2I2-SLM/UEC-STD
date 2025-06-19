@@ -1,7 +1,7 @@
 #!/bin/bash
-#SBATCH --job-name=run_eval_job_ecm
-#SBATCH --output=run_eval_job_ecm_%j.out
-#SBATCH --error=run_eval_job_ecm_%j.err
+#SBATCH --job-name=run_full_job_ecm
+#SBATCH --output=run_full_job_ecm_%j.out
+#SBATCH --error=run_full_job_ecm_%j.err
 #SBATCH --time=96:00:00         # Adjust as needed
 #SBATCH --partition=gpu
 #SBATCH --nodes=1

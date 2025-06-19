@@ -16,8 +16,8 @@ help='Comma-separated error model flags (0, 0.5, 1)', default="0,0.1,0.3,0.5,0.7
 parser.add_argument('--data', type=str, required=True, default="ETTh1")
 parser.add_argument('--model', type=str, required=True, default="TimeMixer")
 parser.add_argument('--ecm', type=str, required=True, default="linear")
-parser.add_argument('--include_x0', type=str, required=False, default="True")
-
+parser.add_argument('--seasonal_trend', type=str_to_bool, 
+                     help='Enable seasonal and trend decomposition', default="False")
 args = parser.parse_args()
 
 pred_lengths = parse_arg_list(args.pred_lengths)
@@ -25,10 +25,16 @@ error_model = parse_arg_list(args.error_flags)
 
 for j in pred_lengths:
     for i in error_model:
-        if "ETT" in args.data:
-            cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 4 1 {j} {i} {args.ecm}"
+        if args.seasonal_trend:
+            if "ETT" in args.data:
+                cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 6 1 {j} {i} {args.ecm}"
+            else:
+                cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 6 1 {j} {i} {args.ecm}"
         else:
-            cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 4 1 {j} {i} {args.ecm}"
+            if "ETT" in args.data:
+                cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 4 1 {j} {i} {args.ecm}"
+            else:
+                cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 4 1 {j} {i} {args.ecm}"
  
         print(f"Running: {cmd}")
         os.system(cmd)

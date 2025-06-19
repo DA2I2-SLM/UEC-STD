@@ -15,16 +15,16 @@ batch_size=16
 
 python -u run.py \
   --task_name long_term_forecast \
-  --is_training $1 \
-  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --is_training 1 \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
   --data_path ETTh1.csv \
-  --model_id ETTh1_$seq_len'_'$3 \
+  --model_id ETTh1_$seq_len'_'96 \
   --model $model_name \
   --data ETTh1 \
   --features M \
   --seq_len $seq_len \
   --label_len 0 \
-  --pred_len $3 \
+  --pred_len 96 \
   --e_layers $e_layers \
   --enc_in 7 \
   --c_out 7 \
@@ -38,89 +38,87 @@ python -u run.py \
   --batch_size 128 \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window \
-  --use_ar $2 \
-  --errcor_coef $4 \
-  --err_h 32 \
-  --ecm_model $5\
+  --down_sampling_window $down_sampling_window
 
 
-# python -u run.py \
-#   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path ETTh1.csv \
-#   --model_id ETTh1_$seq_len'_'192 \
-#   --model $model_name \
-#   --data ETTh1 \
-#   --features M \
-#   --seq_len $seq_len \
-#   --label_len 0 \
-#   --pred_len 192 \
-#   --e_layers $e_layers \
-#   --enc_in 7 \
-#   --c_out 7 \
-#   --des 'Exp' \
-#   --itr 1 \
-#   --d_model $d_model \
-#   --d_ff $d_ff \
-#   --learning_rate $learning_rate \
-#   --train_epochs $train_epochs \
-#   --patience $patience \
-#   --batch_size 128 \
-#   --down_sampling_layers $down_sampling_layers \
-#   --down_sampling_method avg \
-#   --down_sampling_window $down_sampling_window
+python -u run.py \
+  --task_name long_term_forecast \
+  --is_training 1 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTh1.csv \
+  --model_id ETTh1_$seq_len'_'192 \
+  --model $model_name \
+  --data ETTh1 \
+  --features M \
+  --seq_len $seq_len \
+  --label_len 0 \
+  --pred_len 192 \
+  --e_layers $e_layers \
+  --enc_in 7 \
+  --c_out 7 \
+  --des 'Exp' \
+  --itr 1 \
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window
 
 
-# python -u run.py \
-#   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path ETTh1.csv \
-#   --model_id ETTh1_$seq_len'_'336 \
-#   --model $model_name \
-#   --data ETTh1 \
-#   --features M \
-#   --seq_len $seq_len \
-#   --label_len 0 \
-#   --pred_len 336 \
-#   --e_layers $e_layers \
-#   --enc_in 7 \
-#   --c_out 7 \
-#   --des 'Exp' \
-#   --itr 1 \
-#   --d_model $d_model \
-#   --d_ff $d_ff \
-#   --learning_rate $learning_rate \
-#   --train_epochs $train_epochs \
-#   --patience $patience \
-#   --batch_size 128 \
-#   --down_sampling_layers $down_sampling_layers \
-#   --down_sampling_method avg \
-#   --down_sampling_window $down_sampling_window
+python -u run.py \
+  --task_name long_term_forecast \
+  --is_training 1 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTh1.csv \
+  --model_id ETTh1_$seq_len'_'336 \
+  --model $model_name \
+  --data ETTh1 \
+  --features M \
+  --seq_len $seq_len \
+  --label_len 0 \
+  --pred_len 336 \
+  --e_layers $e_layers \
+  --enc_in 7 \
+  --c_out 7 \
+  --des 'Exp' \
+  --itr 1 \
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window
 
-
-# python -u run.py \
-#   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path ETTh1.csv \
-#   --model_id ETTh1_$seq_len'_'720 \
-#   --model $model_name \
-#   --data ETTh1 \
-#   --features M \
-#   --seq_len $seq_len \
-#   --label_len 0 \
-#   --pred_len 720 \
-#   --e_layers $e_layers \
-#   --enc_in 7 \
-#   --c_out 7 \
-#   --des 'Exp' \
-#   --itr 1 \
-#   --d_model $d_model \
-#   --d_ff $d_ff \
-#   --learning_rate $learning_rate \
-#   --train_epochs $train_epochs \
-#   --patience $patience \
-#   --batch_size 128 \
-#   --down_sampling_layers $down_sampling_layers \
-#   --down_sampling_method avg \
-#   --down_sampling_window $down_sampling_window
+python -u run.py \
+  --task_name long_term_forecast \
+  --is_training 1 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTh1.csv \
+  --model_id ETTh1_$seq_len'_'720 \
+  --model $model_name \
+  --data ETTh1 \
+  --features M \
+  --seq_len $seq_len \
+  --label_len 0 \
+  --pred_len 720 \
+  --e_layers $e_layers \
+  --enc_in 7 \
+  --c_out 7 \
+  --des 'Exp' \
+  --itr 1 \
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window
