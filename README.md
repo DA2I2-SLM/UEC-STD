@@ -98,13 +98,13 @@ First, create the run script for ECM. The run script is very similar to the back
 For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "linear" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "logistic" 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "random_forest" 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "xgboost" 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "lstm"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "GRU"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "CNN"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "TF" 
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "logistic" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "random_forest" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "xgboost" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "lstm" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "GRU" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "CNN" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "TF" $season_coef $trend_coef
 ```
 /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/checkpoints/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0
 
@@ -123,13 +123,13 @@ The ECM model is saved in the same checkpoint directory as the backbone model.
 Run the ECM script with different arguments
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "linear" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "logistic"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "random_forest"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "xgboost"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "lstm"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "GRU"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "CNN"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "TF"
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "logistic" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "random_forest" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "xgboost" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "lstm" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "GRU" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "CNN" $season_coef $trend_coef
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "TF" $season_coef $trend_coef
 ```
 Argument explanation:
 - 6: A special mode of doing inference that evaluates the ECM with seasonal and trend components

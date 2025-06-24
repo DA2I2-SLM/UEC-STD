@@ -19,21 +19,29 @@ conda activate timeecm
 
 # Run your command
 export CUDA_VISIBLE_DEVICES=""
+# Train the initial model 
+
 # python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 1 
-# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend False 
-# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend False
-
 # python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 1
-# python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend False
-# python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend False
+
+# Train the ECMs for step 2 and step 3 without seasonal and trend components
+
+# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
+# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
+
+python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear --step 2 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
+python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear --step 3 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
 
 
-# Assuming that already have the initial model, only need to train the seasonal and trend ECMs
+# Train the ECMs for step 2 and step 3 with seasonal and trend components
+
 # python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.5 --trend_coef 0.5
 # python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.5 --trend_coef 0.5
 
-# python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.5 --trend_coef 0.5
-# python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.5 --trend_coef 0.5
+python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear --step 2 --seasonal_trend True --season_coef 0.5 --trend_coef 0.5
+python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear --step 3 --seasonal_trend True --season_coef 0.5 --trend_coef 0.5
+
+# Change the seasonal and trend weights
 
 # python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.6 --trend_coef 0.4
 # python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.6 --trend_coef 0.4
@@ -43,11 +51,11 @@ export CUDA_VISIBLE_DEVICES=""
 
 
 
-python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
-python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
+# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
+# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
 
-python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
-python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
+# python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
+# python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend True --season_coef 0.7 --trend_coef 0.3
 
 
 

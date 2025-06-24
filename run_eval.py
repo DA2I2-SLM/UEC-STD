@@ -29,14 +29,14 @@ for j in pred_lengths:
     for i in error_model:
         if args.seasonal_trend:
             if "ETT" in args.data:
-                cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 6 1 {j} {i} {args.ecm}"
+                cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 6 1 {j} {i} {args.ecm} {args.season_coef} {args.trend_coef}"
             else:
-                cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 6 1 {j} {i} {args.ecm}"
+                cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 6 1 {j} {i} {args.ecm} {args.season_coef} {args.trend_coef}"
         else:
             if "ETT" in args.data:
-                cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 4 1 {j} {i} {args.ecm}"
+                cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 4 1 {j} {i} {args.ecm} {args.season_coef} {args.trend_coef}"
             else:
-                cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 4 1 {j} {i} {args.ecm}"
+                cmd = f"bash ./scripts/long_term_forecast/{args.data}_script/{args.model}_test.sh 4 1 {j} {i} {args.ecm} {args.season_coef} {args.trend_coef}"
  
         print(f"Running: {cmd}")
         os.system(cmd)

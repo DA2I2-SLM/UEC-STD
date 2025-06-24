@@ -1,10 +1,15 @@
 import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+from sklearn.linear_model import Ridge
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
+
 import xgboost as xgb
 
 def create_error_corrector(ecm, input_dim, T, output_dim, hidden_dim, device):
@@ -36,8 +41,9 @@ def create_error_corrector(ecm, input_dim, T, output_dim, hidden_dim, device):
         modelerr = ErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim, hidden_dim=hidden_dim).to(device)
 
     elif ecm == "logistic":
-        modelerr = LogisticErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim, hidden_dim=hidden_dim).to(device)
-
+        modelerr = LogisticRegressionErrorCorrectorSklearn(input_dim=input_dim, T=T, output_dim=output_dim)
+        is_torch_model = False
+        return modelerr, optimizer, loss_fn, scheduler, is_torch_model
     elif ecm == "random_forest":
         modelerr = RandomForestErrorCorrector(input_dim=input_dim, T=T, output_dim=output_dim)
         is_torch_model = False
@@ -126,6 +132,71 @@ class LogisticErrorCorrector(nn.Module):
         probs = torch.sigmoid(logits) if self.classifier[-1].out_features == 1 else F.softmax(logits, dim=-1)
 
         return probs
+
+class LogisticRegressionErrorCorrectorSklearn:
+    def __init__(self, input_dim, T, output_dim, penalty='l2', C=1.0, max_iter=1000):
+        self.input_dim = input_dim
+        self.T = T
+        self.output_dim = output_dim
+
+        self.model = Pipeline([
+            ('scaler', StandardScaler()),
+            ('regressor', Ridge(alpha=1.0))
+        ])
+
+    def fit(self, X, y):
+        """
+        X: (B, T, D) input features
+        y: (B, T, output_dim) targets (converted to flat 1D if binary classification)
+        """
+        B, T, D = X.shape
+        assert D == self.input_dim
+
+        # Flatten features
+        X_flat = X.reshape(B, -1)
+
+        # Flatten targets
+        if self.output_dim == 1:
+            y_flat = y.reshape(B * T)
+        else:
+            y_flat = y.reshape(B, -1)  # For multiclass regression-like tasks
+
+        print(f"Training Logistic Regression with {X_flat.shape[0]} samples and {X_flat.shape[1]} features.")
+        self.model.fit(X_flat, y_flat)
+        print("Training complete.")
+
+    # def predict_proba(self, X):
+    #     """
+    #     X: (B, T, D)
+    #     Returns: probabilities (B, T, C) if output_dim > 1, or (B, T) for binary
+    #     """
+    #     B, T, D = X.shape
+    #     X_flat = X.reshape(B, -1)
+    #     probs_flat = self.model.predict_proba(X_flat)
+    #     if self.output_dim == 1:
+    #         return probs_flat[:, 1].reshape(B, T)  # Return positive class prob
+    #     else:
+    #         return probs_flat.reshape(B, T, self.output_dim)
+
+    # def predict(self, X):
+    #     """
+    #     X: (B, T, D)
+    #     Returns: predictions (B, T)
+    #     """
+    #     B, T, D = X.shape
+    #     X_flat = X.reshape(B, -1)
+    #     preds_flat = self.model.predict(X_flat)
+    #     return preds_flat.reshape(B, T)
+    
+    def predict(self, X):
+        """
+        X: (B, T, D)
+        Returns: (B, T, output_dim)
+        """
+        B, T, D = X.shape
+        X_flat = X.reshape(B, -1)
+        y_pred_flat = self.model.predict(X_flat)  # (B, T * output_dim)
+        return y_pred_flat.reshape(B, T, self.output_dim)  
 
 
 class RNNErrorCorrector(nn.Module):

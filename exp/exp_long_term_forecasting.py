@@ -434,7 +434,29 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return
 
-    def train_infer_batch(self, setting, test=0, ecm="linear", error_flags=None, seasonal_trend=False):
+    def train_infer_batch(self, setting, ecm="linear", error_flags=None):
+        """
+        Run inference using the backbone model, collect predictions and true values,
+        train an error corrector model using prediction residuals, and search for the best error correction coefficient.
+
+        Parameters:
+        -----------
+        setting : str
+            The experiment configuration string used to identify checkpoints and results.
+        ecm : str
+            The error corrector model type. Supported types include 'linear', 'CNN', 'RNN', etc.
+        error_flags : list[float]
+            A list of error correction coefficients to search through.
+
+        Steps:
+        ------
+        1. Load model and inference on validation data in an autoregressive fashion.
+        2. Collect prediction residuals and inputs for error correction model.
+        3. Train the error correction model on residuals.
+        4. Evaluate and select best error coefficient on training data.
+        5. Save the best-performing error corrector model.
+        """
+        # --- Setup and Load Backbone Model ---
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -442,35 +464,39 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         setting_components[11] = "pl"+str(model_pred_len)
         setting = "_".join(setting_components)
         print(setting)
-
         test_data, test_loader = self._get_data(flag='val')
         data_pred_len =self.args.pred_len
         num_ar = math.ceil(data_pred_len//model_pred_len)
+
+        # Override pred_len for backbone model prediction
         self.args.pred_len = model_pred_len
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print("data prediction length: ", data_pred_len)
         print('loading model')
+        
+        # Load backbone model
         self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+
+        # --- Inference Phase ---
         preds = []
         trues = []
         folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
-
         self.model.eval()
         correction_inputs = []
         correction_targets = []
+
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
                 batch_x = batch_x.float().to(self.device)
                 obatch_y = batch_y.float().to(self.device)
-                # print(batch_x.shape)
-                # print(obatch_y.shape)
+
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 obatch_y_mark = batch_y_mark.float().to(self.device)
 
                 for j in range(num_ar):
-                    # print(j)
+                    # Extract correct prediction window for autoregressive step
                     batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
                     batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
                     if j==0:
@@ -479,13 +505,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     else:
                         enc_inp =  pred_y
 
-                        # enc_inp = torch.cat([enc_inptp_gt,enc_inptd], dim=2)
                     batch_x = enc_inp #Autoregression
                     
-                    # decoder input
+                    # Decoder input
                     dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                     dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                    # encoder - decoder
+
+                    # Model prediction
                     if self.args.use_amp:
                         with torch.cuda.amp.autocast():
                             if self.args.output_attention:
@@ -501,6 +527,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     outputs = outputs[:, -self.args.pred_len:, :]
 
                     pred_y = outputs
+
+                    # Optional teacher forcing
                     if self.args.use_ar==0:
                         pred_y = obatch_y[:, self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
 
@@ -520,14 +548,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                     pred = outputs[:batch_y.shape[0],:,:]
                     true = batch_y
-                    # print(pred.shape)
-                    # print(true.shape)
-                    # print("--")
+                    
+                    # Store correction data (input = [input, pred], target = error)
                     correction_inputs.append(torch.cat([torch.tensor(batch_x),torch.tensor(pred_y[:, -self.args.pred_len:, f_dim:]).to(self.device)],dim=-1))
-                    # correction_inputs.append(torch.tensor(pred).to(self.device))
                     correction_targets.append(torch.tensor(true-pred).to(self.device))
+
                     preds.append(pred)
                     trues.append(true)
+
+                    # Visual inspection
                     if i % 10 == 0:
                         input =  batch_x[:,:,:].detach().cpu().numpy()
                         oinput = oinput.detach().cpu().numpy()
@@ -550,7 +579,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     oinput = vbatch_y
                     if i == 20000:
                         break
-        
+       
+        # --- Evaluation & Save Predictions ---
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
         print('test shape:', preds.shape, trues.shape)
@@ -592,7 +622,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
 
-
+        # --- Prepare Correction Dataset ---
         X = torch.cat(correction_inputs, dim=0)  # shape: (N, T, D)
         Y = torch.cat(correction_targets, dim=0)
         print(X.shape)
@@ -610,7 +640,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
 
+
+        # --- Train Error Corrector Model ---
         input_dim=X.shape[-1]
+        # Create the error corrector model
         modelerr, optimizer, loss_fn, scheduler, is_torch_model = create_error_corrector(
                                                                                             ecm=ecm,
                                                                                             input_dim=input_dim,
@@ -622,8 +655,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         if is_torch_model:
             best_val_loss = float('inf')  # Initialize best validation loss as infinity
-            patience = 10  # number of epochs to wait without improvement
-            counter = 0
             best_model_err = None
 
             for epoch in range(100):
@@ -631,8 +662,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 total_loss = 0
                 for xb, yb in train_loader:
                     optimizer.zero_grad()
-                    # print(xb.shape)
-                    # exit()
                     pred = modelerr(xb)
                     loss = loss_fn(pred, yb)
                     loss.backward()
@@ -684,7 +713,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             val_pred = modelerr.predict(val_X)
             val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
-            print(f"RandomForest - Validation Loss: {val_loss:.4f}")
+            print(f"Validation Loss: {val_loss:.4f}")
             best_model_err = modelerr
                     
         criterion = self._select_criterion()
@@ -711,7 +740,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
 
 
-    def test_infer_batch(self, setting, test=0, ecm="linear", error_flags=None):
+    def test_infer_batch(self, setting, ecm="linear"):
+        """
+        Perform inference on test data using a backbone model with optional error correction.
+
+        Parameters:
+        -----------
+        setting : str
+            Experiment identifier used to load models and save results.
+        ecm : str
+            Type of error corrector model used (e.g., 'linear', 'mlp', 'rf').
+        """
+        # --------------------------
+        # Load model configuration
+        # --------------------------
         model_pred_len = self.args.seq_len
         setting_components = setting.split("_")
         print(setting_components)
@@ -720,26 +762,34 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         setting = "_".join(setting_components)
         print(setting)
 
+        # Load test data
         test_data, test_loader = self._get_data(flag='test')
         data_pred_len =self.args.pred_len
         num_ar = math.ceil(data_pred_len/model_pred_len)
+
+        # Update model prediction length to match training time
         self.args.pred_len = model_pred_len
+
+        # Load backbone model
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
         self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
         
-
+        # --------------------------
+        # Load trained error corrector model
+        # --------------------------
         input_dim=self.args.enc_in*2
-        # exit()
         print('loading modelerr')
-        modelerr, optimizer, loss_fn, scheduler, is_torch_model = create_error_corrector(
-                                                                                    ecm=ecm,
-                                                                                    input_dim=input_dim,
-                                                                                    T=model_pred_len,
-                                                                                    output_dim=self.args.enc_in,
-                                                                                    hidden_dim=self.args.err_h,
-                                                                                    device=self.device
-                                                                                )
+        modelerr, _, _, _, is_torch_model = create_error_corrector(
+                                                                    ecm=ecm,
+                                                                    input_dim=input_dim,
+                                                                    T=model_pred_len,
+                                                                    output_dim=self.args.enc_in,
+                                                                    hidden_dim=self.args.err_h,
+                                                                    device=self.device
+                                                                    )
+        
+        # Try loading error corrector model using various saved coefficients
         possible_coeffs = [0, 0.1, 0.3, 0.5, 0.7, 1.0]
         for coeff in possible_coeffs:
             try:
@@ -754,6 +804,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         print("data prediction length: ", data_pred_len)
 
+        # --------------------------
+        # Begin inference
+        # --------------------------
         preds = []
         trues = []
         folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + '/'
@@ -766,8 +819,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
                 batch_x = batch_x.float().to(self.device)
                 obatch_y = batch_y.float().to(self.device)
-                # print(batch_x.shape)
-                # print(obatch_y.shape)
+
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 obatch_y_mark = batch_y_mark.float().to(self.device)
                 opreds = []
@@ -775,18 +827,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 for j in range(num_ar):
                     batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
                     batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
+
+                    # Set encoder input
                     if j==0:
                         enc_inp = batch_x
                         oinput = batch_x
                     else:
                         enc_inp =  pred_y
-                       
-                            
-
                     batch_x = enc_inp #Autoregression
                     
+                    # Decoder input
                     dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
                     dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                    
+                    # Run prediction
                     # encoder - decoder
                     if self.args.use_amp:
                         with torch.cuda.amp.autocast():
@@ -800,12 +854,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     f_dim = -1 if self.args.features == 'MS' else 0
 
                     
+                    # ----------------------------------
+                    # Apply error correction if enabled
+                    # ----------------------------------
                     if self.args.errcor_coef>0:
                         meinput = torch.cat([batch_x, outputs[:, -self.args.pred_len:, f_dim:]], dim=-1)
-
-                        # print("meinput shape", meinput.shape)   
-                        # exit()
-                        # meinput = outputs[:, -self.args.pred_len:, f_dim:]
                         if is_torch_model:
                             perr = modelerr(meinput)
                         else:
@@ -816,6 +869,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     outputs = outputs[:, -self.args.pred_len:, :]
 
                     pred_y = outputs
+
+                    # Optional teacher forcing
                     if self.args.use_ar==0:
                         pred_y = obatch_y[:, self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
 
@@ -824,25 +879,27 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     vbatch_y = batch_y[:, :, f_dim:]
                     outputs = outputs.detach().cpu().numpy()
                     batch_y = batch_y.detach().cpu().numpy()
+
+                    # Inverse scale if necessary
                     if test_data.scale and self.args.inverse:
                         shape = outputs.shape
                         outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
                         batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
             
-            
+                    # Apply error correction output
                     outputs = outputs[:, :, f_dim:]
                     batch_y = batch_y[:, :, f_dim:]
 
                     pred = outputs[:batch_y.shape[0],:,:]
+
                     if self.args.errcor_coef>0:
                        pred =  outputs_pred[:batch_y.shape[0], -self.args.pred_len:, f_dim:].detach().cpu().numpy()
                     true = batch_y
-                    # print(pred.shape)
-                    # print(true.shape)
-                    # print("--")
                    
                     opreds.append(pred)
                     otrues.append(true)
+
+                    # Visual inspection
                     if i % 10 == 0:
                         input =  batch_x[:,:,:].detach().cpu().numpy()
                         oinput = oinput.detach().cpu().numpy()
@@ -853,7 +910,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                         gts = []
                         pds = []
-
                         for ii in range(7):
                             gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                             gts.append(gt)
@@ -863,6 +919,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     oinput = vbatch_y
                     if i == 20000:
                         break
+                
+                # Merge multi-step outputs -> Inspect this code for evaluation from Hiep
                 opreds = np.concatenate(opreds, axis=1)
                 otrues = np.concatenate(otrues, axis=1)
 
@@ -870,7 +928,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 otrues = otrues[:,:data_pred_len,:]
                 
                 preds.append(opreds)
-                trues.append(otrues)        
+                trues.append(otrues)    
+
+        # --------------------------
+        # Final evaluation
+        # --------------------------       
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
         print('test shape:', preds.shape, trues.shape)
@@ -1105,11 +1167,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
 
-
         X = torch.cat(correction_inputs, dim=0)  # shape: (N, T, D)
         Y = torch.cat(correction_targets, dim=0)
-        print(X.shape)
-        print(Y.shape)
+
         from torch.utils.data import TensorDataset, DataLoader, random_split
         # Normalize inputs (pred) and targets (error)
         Y_mean = Y.mean(dim=(0, 1), keepdim=True)
@@ -1135,8 +1195,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         if is_torch_model:
             best_val_loss = float('inf')  # Initialize best validation loss as infinity
-            patience = 10  # number of epochs to wait without improvement
-            counter = 0
             best_model_err = None
 
             for epoch in range(100):
@@ -1227,7 +1285,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             train_X = np.concatenate(train_X, axis=0)
             train_Y = np.concatenate(train_Y, axis=0)
 
-            # Fit the random forest model
+            # Fit the model
             modelerr.fit(train_X, train_Y)
 
             # Validation
@@ -1240,7 +1298,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             val_pred = modelerr.predict(val_X)
             val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
-            print(f"RandomForest - Validation Loss: {val_loss:.4f}")
+            print(f"Validation Loss: {val_loss:.4f}")
             best_model_err = modelerr
                     
         criterion = self._select_criterion()
