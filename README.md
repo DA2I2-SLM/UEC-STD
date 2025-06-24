@@ -3,7 +3,7 @@ Timeseries With Error Correction Model (Autoregressive Decoding)
 
 Reference Repo: https://github.com/thuml/Time-Series-Library
 
-## Setup
+## 1. Setup
 ```bash
 # Install Python
 conda create -n timeecm python=3.8
@@ -12,7 +12,7 @@ conda activate timeecm
 pip install -r requirements.txt
 ```
 
-## Dataset Preparation
+## 2. Dataset Preparation
 ```bash
 cd TimeSeriesECM
 mkdir scratch
@@ -20,16 +20,16 @@ mkdir scratch/dataset/
 ```
 Download and unzip the dataset https://github.com/thuml/Time-Series-Library
 
-## Experiment Steps
+## 3. Experiment Steps
 Follow these steps to create and evaluate ECM
-### Train the backbone model
+### 3.1 Train the backbone model
 For example, train TimeMixer with ETTh1 dataset:
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1.sh
 ```
 The checkpoints and logs should be found in ./scratch/s223669184/project_data/Grant25/TimeSeriesECM/checkpoints and ./scratch/results
 
-### Train the ECM model
+### 3.2 Train the ECM model without seasonal and trend
 First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
 For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
 ```bash
@@ -55,7 +55,7 @@ The ECM model is saved in the same checkpoint directory as the backbone model.
  
 
 
-### Evaluate the ECM model
+### 3.3 Evaluate the ECM model without seasonal and trend
 Run the ECM script with different arguments
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "linear" 0 0
@@ -76,7 +76,7 @@ Argument explanation:
   
 To do a mass evaluation with different decoding lengths and error-correcting rates:
 ```python
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear"
+python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" --seasonal_trend False --season_coef 0 ----trend_coef 0 
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "logistic"
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "random_forest"
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "xgboost"
@@ -95,7 +95,7 @@ python run_full.py \
 
 The results should be found in ./scratch/infer_results/
 
-### Train the ECM model with seasonal and trend components 
+### 3.4 Train the ECM model with seasonal and trend components 
 First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
 For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
 ```bash
@@ -121,7 +121,7 @@ Argument explanation:
 
 The ECM model is saved in the same checkpoint directory as the backbone model.
 
-### Evaluate the ECM model with seasonal and trend components
+### 3.5 Evaluate the ECM model with seasonal and trend components
 Run the ECM script with different arguments
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "linear" $season_coef $trend_coef
@@ -164,7 +164,7 @@ python run_full.py \
 
 The results should be found in ./scratch/infer_results/
 
-### Report the ECM evaluation
+### 3.6 Report the ECM evaluation
 Report the TimeMixer ECM on ETTh1 dataset
 ```python
 python report.py --dir ./scratch/infer_results/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0/
