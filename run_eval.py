@@ -23,10 +23,10 @@ parser.add_argument('--trend_coef', type=float, default=0.5, help="weight of tre
 args = parser.parse_args()
 
 pred_lengths = parse_arg_list(args.pred_lengths)
-error_model = parse_arg_list(args.error_flags)
+error_flags = parse_arg_list(args.error_flags)
 
 for j in pred_lengths:
-    for i in error_model:
+    for i in error_flags:
         if args.seasonal_trend:
             if "ETT" in args.data:
                 cmd = f"bash ./scripts/long_term_forecast/ETT_script/{args.model}_{args.data}_test.sh 6 1 {j} {i} {args.ecm} {args.season_coef} {args.trend_coef}"

@@ -27,7 +27,7 @@ export CUDA_VISIBLE_DEVICES=""
 # Train the ECMs for step 2 and step 3 without seasonal and trend components
 
 # python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 2 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
-# python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear,logistic,random_forest,xgboost,lstm,GRU,CNN,TF --step 3 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
+python run_full.py --data ETTh1 --data_type ETT --model TimeMixer --ecm linear --step 3 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
 
 python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear --step 2 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5
 python run_full.py --data Traffic,Weather --data_type Traffic,Weather --model TimeMixer --ecm linear --step 3 --seasonal_trend False --season_coef 0.5 --trend_coef 0.5

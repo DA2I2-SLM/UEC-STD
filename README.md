@@ -33,14 +33,14 @@ The checkpoints and logs should be found in ./scratch/s223669184/project_data/Gr
 First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
 For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
 ```bash
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "linear" 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "logistic"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "random_forest" 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "xgboost" 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "lstm"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "GRU"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "CNN"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "TF" 
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "linear" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "logistic" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "random_forest" 0 0 
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "xgboost" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "lstm" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "GRU" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "CNN" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "TF" 0 0
 ```
 /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/checkpoints/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0
 
@@ -49,6 +49,7 @@ Argument explanation:
 - 1: Turn on autoregressive decoding. It should be always 1. If it is set to 0, the input for autoregressive decoding will be the ground truth.
 - 336: The length of the decoding sequence. It should be multiples of the unit prediction length (eg., 96)
 - 1: Turn on the rate of error-correcting. It is not used in mode 3
+- 0 0: These are the seasonal and trend coefficient (set to 0 means not modifying the weight of the loss function). They will not be used here (only be used in mode 5 and 6).
 
 The ECM model is saved in the same checkpoint directory as the backbone model.
  
@@ -57,20 +58,21 @@ The ECM model is saved in the same checkpoint directory as the backbone model.
 ### Evaluate the ECM model
 Run the ECM script with different arguments
 ```bash
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "linear"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "logistic"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "random_forest"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "xgboost"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "lstm"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "GRU"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "CNN"
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "TF"
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "linear" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "logistic" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "random_forest" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "xgboost" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "lstm" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "GRU" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "CNN" 0 0
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "TF" 0 0
 ```
 Argument explanation:
 - 4: A special mode of doing inference that evaluates the ECM
 - 1: Turn on autoregressive decoding (must be 1).
 - 336: the testing length (336) can be different from the training length (336).
 - 1: It can be any number between 0 and 1. 0 means not using ECM, and 1 means fully using ECM. The number in between specifies how much ECM is used.
+- 0 0: These are the seasonal and trend coefficient (set to 0 means not modifying the weight of the loss function). They will not be used here (only be used in mode 5 and 6).
   
 To do a mass evaluation with different decoding lengths and error-correcting rates:
 ```python
@@ -141,8 +143,9 @@ Argument explanation:
   
 To do a mass evaluation with different decoding lengths and error-correcting rates:
 ```python
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" or
+python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" --seasonal_trend False --season_coef 0 --trend_coef 0  or
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" --seasonal_trend True --season_coef $season_coef --trend_coef $trend_coef  
+Similarly:
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "logistic"
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "random_forest"
 python run_eval.py --data ETTh1 --model TimeMixer --ecm "xgboost"
