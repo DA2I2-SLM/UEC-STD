@@ -9,6 +9,7 @@ from sklearn.linear_model import Ridge
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.decomposition import PCA
 
 import xgboost as xgb
 
@@ -134,14 +135,19 @@ class LogisticErrorCorrector(nn.Module):
         return probs
 
 class LogisticRegressionErrorCorrectorSklearn:
-    def __init__(self, input_dim, T, output_dim, penalty='l2', C=1.0, max_iter=1000):
+    def __init__(self, input_dim, T, output_dim, penalty='l2', C=1.0, tol=1e-3, max_iter=1000):
         self.input_dim = input_dim
         self.T = T
         self.output_dim = output_dim
 
         self.model = Pipeline([
             ('scaler', StandardScaler()),
-            ('regressor', Ridge(alpha=1.0))
+            ('pca', PCA(n_components=0.95)),   # keep 95% variance automatically
+            ('regressor', Ridge(alpha=1.0,     
+                                solver='sag',        # ← iterative solver            
+                                max_iter=max_iter, 
+                                tol=tol,             # ← convergence threshold  # ← your max iterations
+                                random_state=42))
         ])
 
     def fit(self, X, y):
@@ -156,37 +162,15 @@ class LogisticRegressionErrorCorrectorSklearn:
         X_flat = X.reshape(B, -1)
 
         # Flatten targets
-        if self.output_dim == 1:
-            y_flat = y.reshape(B * T)
-        else:
-            y_flat = y.reshape(B, -1)  # For multiclass regression-like tasks
+        # if self.output_dim == 1:
+        #     y_flat = y.reshape(B * T)
+        # else:
+        #     y_flat = y.reshape(B, -1)  # For multiclass regression-like tasks
+        y_flat = y.reshape(B, -1)  # Ensure y is 2D for sklearn
 
         print(f"Training Logistic Regression with {X_flat.shape[0]} samples and {X_flat.shape[1]} features.")
         self.model.fit(X_flat, y_flat)
         print("Training complete.")
-
-    # def predict_proba(self, X):
-    #     """
-    #     X: (B, T, D)
-    #     Returns: probabilities (B, T, C) if output_dim > 1, or (B, T) for binary
-    #     """
-    #     B, T, D = X.shape
-    #     X_flat = X.reshape(B, -1)
-    #     probs_flat = self.model.predict_proba(X_flat)
-    #     if self.output_dim == 1:
-    #         return probs_flat[:, 1].reshape(B, T)  # Return positive class prob
-    #     else:
-    #         return probs_flat.reshape(B, T, self.output_dim)
-
-    # def predict(self, X):
-    #     """
-    #     X: (B, T, D)
-    #     Returns: predictions (B, T)
-    #     """
-    #     B, T, D = X.shape
-    #     X_flat = X.reshape(B, -1)
-    #     preds_flat = self.model.predict(X_flat)
-    #     return preds_flat.reshape(B, T)
     
     def predict(self, X):
         """
@@ -296,7 +280,15 @@ class TransformerErrorCorrector(nn.Module):
 ##########################################################Traditional Model###############################
 
 class RandomForestErrorCorrector:
-    def __init__(self, input_dim, T, output_dim, n_estimators=100, max_depth=10):
+    def __init__(self, input_dim, T, output_dim, n_estimators=20, max_depth=6):
+        """
+        RandomForestErrorCorrector:
+        - input_dim: number of features per time step (D)
+        - T: sequence length (number of time steps)
+        - output_dim: number of target dimensions per time step
+        - n_estimators: number of trees in the forest (default=100)
+        - max_depth: maximum depth of each tree (default=10)
+        """
         self.input_dim = input_dim
         self.T = T
         self.output_dim = output_dim
@@ -336,7 +328,7 @@ class RandomForestErrorCorrector:
         return y_pred_flat.reshape(B, T, self.output_dim)    
     
 class XGBoostErrorCorrector:
-    def __init__(self, input_dim, T, output_dim, n_estimators=100, max_depth=6, learning_rate=0.3, subsample=1, early_stopping_rounds=10):
+    def __init__(self, input_dim, T, output_dim, n_estimators=20, max_depth=6, learning_rate=0.3, subsample=1, early_stopping_rounds=10):
         """
         XGBoostErrorCorrector: Corrects errors using XGBoost.
 
@@ -393,6 +385,7 @@ class XGBoostErrorCorrector:
         X_flat = X.reshape(B, -1)
         y_pred_flat = self.model.predict(X_flat)  # (B, T * output_dim)
         return y_pred_flat.reshape(B, T, self.output_dim)
+
 
 def moving_avg(x, kernel_size=25):
     pad = (kernel_size - 1) // 2

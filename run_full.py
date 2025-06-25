@@ -78,10 +78,10 @@ if not args.seasonal_trend:
                     print(f"Warning: script not found: {bash_script}")
                     continue
                 for ecm in ecms:
-                    for pred_len in pred_lengths:
-                        cmd = f"bash {bash_script} 3 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
-                        print(f"Running: {cmd}")
-                        os.system(cmd)
+                    # for pred_len in pred_lengths:
+                    cmd = f"bash {bash_script} 3 1 336 1 {ecm} {args.season_coef} {args.trend_coef}"
+                    print(f"Running: {cmd}")
+                    os.system(cmd)
     elif args.step == 3:
         # === STEP 3: Eval all ECM + pred_length + error_flag combinations ===
         print("Eval ECM + pred_length + error_flag combinations.")
@@ -140,10 +140,9 @@ else:
                     print(f"Warning: script not found: {bash_script}")
                     continue
                 for ecm in ecms:
-                    for pred_len in pred_lengths:
-                        cmd = f"bash {bash_script} 5 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
-                        print(f"Running: {cmd}")
-                        os.system(cmd)
+                    cmd = f"bash {bash_script} 5 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
+                    print(f"Running: {cmd}")
+                    os.system(cmd)
     elif args.step == 3:
         # === STEP 3: Eval all ECM + pred_length + error_flag combinations ===
         print("Eval ECM + pred_length + error_flag combinations.")

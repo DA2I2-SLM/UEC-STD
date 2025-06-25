@@ -378,7 +378,7 @@ if __name__ == '__main__':
                 ii)
         print('>>>>>>>training infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
         error_flags = parse_arg_list(args.error_flags)
-        exp.train_infer_batch_with_trend_season(setting, test=1, ecm=args.ecm_model, error_flags=error_flags, seasonal_trend=True)
+        exp.train_infer_batch_with_trend_season(setting, ecm=args.ecm_model, error_flags=error_flags)
         if args.gpu_type == 'mps':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':
@@ -409,7 +409,7 @@ if __name__ == '__main__':
                 args.des, 
                 ii)
         print('>>>>>>>testing infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
-        exp.test_infer_batch_with_trend_season(setting, test=1, ecm=args.ecm_model)
+        exp.test_infer_batch_with_trend_season(setting, ecm=args.ecm_model)
         if args.gpu_type == 'mps':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':
