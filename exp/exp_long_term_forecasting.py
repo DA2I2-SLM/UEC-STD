@@ -1395,7 +1395,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             if not os.path.exists(save_path_season):
                 joblib.dump(best_model_err_season, save_path_season)
-                joblib.dump(save_path_trend, save_path_trend)
+                joblib.dump(best_model_err_trend, save_path_trend)
     
 
     def vali_with_seasonal_trend(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model_seasonal=None, error_model_trend=None):

@@ -14,7 +14,7 @@ from distutils.util import strtobool
 
 if __name__ == '__main__':
     fix_seed = 2021
-    # random.seed(fix_seed)
+    random.seed(fix_seed)
     torch.manual_seed(fix_seed)
     np.random.seed(fix_seed)
 
