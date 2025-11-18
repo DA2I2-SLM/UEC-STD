@@ -1,4 +1,4 @@
-#export CUDA_VISIBLE_DEVICES=0
+##export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeMixer
 
@@ -15,7 +15,8 @@ batch_size=8
 python -u run.py \
   --task_name long_term_forecast \
   --is_training $1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path exchange_rate.csv \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path exchange_rate.csv \
   --model_id Exchange_$seq_len'_'$3 \
   --model $model_name \
   --data custom \
@@ -40,7 +41,10 @@ python -u run.py \
   --down_sampling_window $down_sampling_window \
   --use_ar $2 \
   --errcor_coef $4 \
-  --err_h 4
+  --err_h 4 \
+  --ecm_model $5\
+  --season_coef $6 \
+  --trend_coef $7 \
 
 # python -u run.py \
 #   --task_name long_term_forecast \

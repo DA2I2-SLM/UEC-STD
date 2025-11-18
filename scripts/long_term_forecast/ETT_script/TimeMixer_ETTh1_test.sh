@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeMixer
 
@@ -12,6 +12,7 @@ d_ff=32
 train_epochs=10
 patience=10
 batch_size=16
+kernel_size=25
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -45,19 +46,21 @@ python -u run.py \
   --ecm_model $5\
   --season_coef $6 \
   --trend_coef $7 \
+  --kernel_size $kernel_size \
 
 
 # python -u run.py \
 #   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path ETTh1.csv \
-#   --model_id ETTh1_$seq_len'_'192 \
+#   --is_training $1 \
+#   --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+#   --data_path ETTh1.csv \
+#   --model_id ETTh1_$seq_len'_'$3 \
 #   --model $model_name \
 #   --data ETTh1 \
 #   --features M \
 #   --seq_len $seq_len \
 #   --label_len 0 \
-#   --pred_len 192 \
+#   --pred_len $3 \
 #   --e_layers $e_layers \
 #   --enc_in 7 \
 #   --c_out 7 \
@@ -71,7 +74,14 @@ python -u run.py \
 #   --batch_size 128 \
 #   --down_sampling_layers $down_sampling_layers \
 #   --down_sampling_method avg \
-#   --down_sampling_window $down_sampling_window
+#   --down_sampling_window $down_sampling_window \
+#   --use_ar $2 \
+#   --errcor_coef $4 \
+#   --err_h 32 \
+#   --ecm_model $5\
+#   --season_coef $6 \
+#   --trend_coef $7 \
+#   --kernel_size $kernel_size \
 
 
 # python -u run.py \

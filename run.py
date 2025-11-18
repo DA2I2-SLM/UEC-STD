@@ -154,7 +154,9 @@ if __name__ == '__main__':
                         help='Comma-separated error model flags (0, 0.5, 1)', default="0.1,0.3,0.5,0.7,1")
     parser.add_argument('--extra_tag', type=str, default="", help="Anything extra")
     parser.add_argument('--wandb', type=str_to_bool, 
-                     help='Whether to log to wandb?', default="False")
+                     help='Whether to log to wandb?', default="True")
+    parser.add_argument('--kernel_size', type=int, 
+                     help='Kernel size for moving average decomposition', default=25)
 
     # TimeXer
     parser.add_argument('--patch_len', type=int, default=16, help='patch length')
@@ -315,12 +317,12 @@ if __name__ == '__main__':
         print('>>>>>>>training infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
         
         error_flags = parse_arg_list(args.error_flags)
-
         exp.train_infer_batch(setting, ecm=args.ecm_model, error_flags=error_flags)
         if args.gpu_type == 'mps':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':
             torch.cuda.empty_cache()
+
     elif args.is_training==4:
         exp = Exp(args)  # set experiments
         ii = 0
@@ -409,7 +411,72 @@ if __name__ == '__main__':
                 args.des, 
                 ii)
         print('>>>>>>>testing infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+
         exp.test_infer_batch_with_trend_season(setting, ecm=args.ecm_model)
+        if args.gpu_type == 'mps':
+            torch.backends.mps.empty_cache()
+        elif args.gpu_type == 'cuda':
+            torch.cuda.empty_cache()  
+
+    elif args.is_training==7:
+        exp = Exp(args)  # set experiments
+        ii = 0
+        setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
+                args.task_name,
+                args.model_id,
+                args.model,
+                args.data,
+                args.features,
+                args.seq_len,
+                args.label_len,
+                args.pred_len,
+                args.d_model,
+                args.n_heads,
+                args.e_layers,
+                args.d_layers,
+                args.d_ff,
+                args.expand,
+                args.d_conv,
+                args.factor,
+                args.embed,
+                args.distil,
+                args.des, 
+                ii)
+        print('>>>>>>>training infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+        error_flags = parse_arg_list(args.error_flags)
+        exp.train_infer_batch_with_trend_season_ablation1(setting, ecm=args.ecm_model, error_flags=error_flags)
+        if args.gpu_type == 'mps':
+            torch.backends.mps.empty_cache()
+        elif args.gpu_type == 'cuda':
+            torch.cuda.empty_cache()  
+
+    elif args.is_training==8:
+        exp = Exp(args)  # set experiments
+        ii = 0
+        setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
+                args.task_name,
+                args.model_id,
+                args.model,
+                args.data,
+                args.features,
+                args.seq_len,
+                args.label_len,
+                args.pred_len,
+                args.d_model,
+                args.n_heads,
+                args.e_layers,
+                args.d_layers,
+                args.d_ff,
+                args.expand,
+                args.d_conv,
+                args.factor,
+                args.embed,
+                args.distil,
+                args.des, 
+                ii)
+        print('>>>>>>>testing infer batch: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
+
+        exp.test_infer_batch_with_trend_season_ablation1(setting, ecm=args.ecm_model)
         if args.gpu_type == 'mps':
             torch.backends.mps.empty_cache()
         elif args.gpu_type == 'cuda':

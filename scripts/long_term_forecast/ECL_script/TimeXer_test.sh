@@ -1,11 +1,12 @@
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeXer
 
 python -u run.py \
   --task_name long_term_forecast \
   --is_training $1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path electricity.csv \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path electricity.csv \
   --model_id ECL_96_$3 \
   --model $model_name \
   --data custom \
@@ -24,8 +25,11 @@ python -u run.py \
   --itr 1 \
   --use_ar $2 \
   --errcor_coef $4 \
-  --err_h 4
-
+  --err_h 4 \
+  --ecm_model $5 \
+  --season_coef $6 \
+  --trend_coef $7 \
+  
 # python -u run.py \
 #   --task_name long_term_forecast \
 #   --is_training 1 \

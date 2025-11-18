@@ -1,4 +1,4 @@
-#export CUDA_VISIBLE_DEVICES=0
+##export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeMixer
 
@@ -15,7 +15,8 @@ batch_size=8
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path exchange_rate.csv \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path exchange_rate.csv \
   --model_id Exchange_$seq_len'_'96 \
   --model $model_name \
   --data custom \
@@ -42,7 +43,8 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path exchange_rate.csv \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path exchange_rate.csv \
   --model_id Exchange_$seq_len'_'192 \
   --model $model_name \
   --data custom \
@@ -69,7 +71,8 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path exchange_rate.csv \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path exchange_rate.csv \
   --model_id Exchange_$seq_len'_'336 \
   --model $model_name \
   --data custom \
@@ -96,7 +99,8 @@ python -u run.py \
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path exchange_rate.csv \
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path exchange_rate.csv \
   --model_id Exchange_$seq_len'_'720 \
   --model $model_name \
   --data custom \

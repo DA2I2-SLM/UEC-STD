@@ -1,98 +1,124 @@
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimesNet
 
+seq_len=96
+e_layers=2
+down_sampling_layers=3
+down_sampling_window=2
+learning_rate=0.01
+d_model=16
+d_ff=32
+train_epochs=10
+patience=10
+batch_size=16
+
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
   --data_path ETTm2.csv \
-  --model_id ETTm2_96_96 \
+  --model_id ETTm2_$seq_len'_'96 \
   --model $model_name \
   --data ETTm2 \
   --features M \
-  --seq_len 96 \
-  --label_len 48 \
+  --seq_len $seq_len \
+  --label_len 0 \
   --pred_len 96 \
-  --e_layers 2 \
-  --d_layers 1 \
-  --factor 3 \
+  --e_layers $e_layers \
   --enc_in 7 \
-  --dec_in 7 \
   --c_out 7 \
   --des 'Exp' \
-  --d_model 32 \
-  --d_ff 32 \
-  --top_k 5 \
-  --itr 1
+  --itr 1 \
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window
+
 
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
-  --data_path ETTm2.csv \  --model_id ETTm2_96_192 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTm2.csv \
+  --model_id ETTm2_$seq_len'_'192 \
   --model $model_name \
   --data ETTm2 \
   --features M \
-  --seq_len 96 \
-  --label_len 48 \
+  --seq_len $seq_len \
+  --label_len 0 \
   --pred_len 192 \
-  --e_layers 2 \
-  --d_layers 1 \
-  --factor 3 \
+  --e_layers $e_layers \
   --enc_in 7 \
-  --dec_in 7 \
   --c_out 7 \
   --des 'Exp' \
-  --d_model 32 \
-  --d_ff 32 \
-  --top_k 5 \
   --itr 1 \
-  --train_epochs 1
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window
+
 
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
-  --data_path ETTm2.csv \  --model_id ETTm2_96_336 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTm2.csv \
+  --model_id ETTm2_$seq_len'_'336 \
   --model $model_name \
   --data ETTm2 \
   --features M \
-  --seq_len 96 \
-  --label_len 48 \
+  --seq_len $seq_len \
+  --label_len 0 \
   --pred_len 336 \
-  --e_layers 2 \
-  --d_layers 1 \
-  --factor 3 \
+  --e_layers $e_layers \
   --enc_in 7 \
-  --dec_in 7 \
   --c_out 7 \
   --des 'Exp' \
-  --d_model 32 \
-  --d_ff 32 \
-  --top_k 5 \
-  --itr 1
+  --itr 1 \
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window
 
 python -u run.py \
   --task_name long_term_forecast \
   --is_training 1 \
-  --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
-  --data_path ETTm2.csv \  --model_id ETTm2_96_720 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/\
+  --data_path ETTm2.csv \
+  --model_id ETTm2_$seq_len'_'720 \
   --model $model_name \
   --data ETTm2 \
   --features M \
-  --seq_len 96 \
-  --label_len 48 \
+  --seq_len $seq_len \
+  --label_len 0 \
   --pred_len 720 \
-  --e_layers 2 \
-  --d_layers 1 \
-  --factor 3 \
+  --e_layers $e_layers \
   --enc_in 7 \
-  --dec_in 7 \
   --c_out 7 \
   --des 'Exp' \
-  --d_model 16 \
-  --d_ff 32 \
-  --top_k 5 \
   --itr 1 \
-  --train_epochs 1
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --batch_size 128 \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window

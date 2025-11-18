@@ -28,6 +28,7 @@ parser.add_argument('--seasonal_trend', type=str_to_bool,
                      help='Enable seasonal and trend decomposition', default="False")
 parser.add_argument('--season_coef', type=float, default=0.5, help="weight of seasonal interpolation")
 parser.add_argument('--trend_coef', type=float, default=0.5, help="weight of trend interpolation")
+parser.add_argument('--ablation', type=int, default=0, help="Enable ablation study")
 
 args = parser.parse_args()
 
@@ -78,8 +79,10 @@ if not args.seasonal_trend:
                     print(f"Warning: script not found: {bash_script}")
                     continue
                 for ecm in ecms:
+                    print(ecms)
                     # for pred_len in pred_lengths:
                     cmd = f"bash {bash_script} 3 1 336 1 {ecm} {args.season_coef} {args.trend_coef}"
+                    # cmd = f"bash {bash_script} 7 1 336 1 {ecm} {args.season_coef} {args.trend_coef}"
                     print(f"Running: {cmd}")
                     os.system(cmd)
     elif args.step == 3:
@@ -100,6 +103,14 @@ if not args.seasonal_trend:
                             cmd = f"bash {bash_script} 4 1 {pred_len} {err_flag} {ecm} {args.season_coef} {args.trend_coef}"
                             print(f"Running: {cmd}")
                             os.system(cmd)
+
+                        # cmd = f"bash {bash_script} 4 1 {pred_len} 0.0 {ecm} {args.season_coef} {args.trend_coef}"
+                        # print(f"Running: {cmd}")
+                        # os.system(cmd)
+
+                        # cmd = f"bash {bash_script} 4 1 {pred_len} 1.0 {ecm} {args.season_coef} {args.trend_coef}"
+                        # print(f"Running: {cmd}")
+                        # os.system(cmd)
 
 else:
     if len(data_types) == 1:
@@ -140,9 +151,14 @@ else:
                     print(f"Warning: script not found: {bash_script}")
                     continue
                 for ecm in ecms:
-                    cmd = f"bash {bash_script} 5 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
-                    print(f"Running: {cmd}")
-                    os.system(cmd)
+                    if args.ablation==0:
+                        cmd = f"bash {bash_script} 5 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
+                        print(f"Running: {cmd}")
+                        os.system(cmd)
+                    else:
+                        cmd = f"bash {bash_script} 7 1 {pred_lengths_train} 1 {ecm} {args.season_coef} {args.trend_coef}"
+                        print(f"Running: {cmd}")
+                        os.system(cmd)
     elif args.step == 3:
         # === STEP 3: Eval all ECM + pred_length + error_flag combinations ===
         print("Eval ECM + pred_length + error_flag combinations.")
@@ -158,6 +174,10 @@ else:
                 for ecm in ecms:
                     for pred_len in pred_lengths:
                         for err_flag in error_model:
-                            cmd = f"bash {bash_script} 6 1 {pred_len} {err_flag} {ecm} {args.season_coef} {args.trend_coef}"
+                            if args.ablation==0:
+                                cmd = f"bash {bash_script} 6 1 {pred_len} {err_flag} {ecm} {args.season_coef} {args.trend_coef}"
+                            else:
+                                cmd = f"bash {bash_script} 8 1 {pred_len} {err_flag} {ecm} {args.season_coef} {args.trend_coef}"
                             print(f"Running: {cmd}")
                             os.system(cmd)
+

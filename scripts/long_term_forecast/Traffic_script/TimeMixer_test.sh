@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeMixer
 
@@ -11,7 +11,7 @@ d_model=32
 d_ff=64
 train_epochs=10
 patience=10
-batch_size=16
+batch_size=64
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -35,8 +35,10 @@ python -u run.py \
   --itr 1 \
   --d_model $d_model \
   --d_ff $d_ff \
-  --batch_size $batch_size \
+  --batch_size 64 \
   --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
   --down_sampling_window $down_sampling_window \

@@ -10,10 +10,22 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.decomposition import PCA
+from statsmodels.tsa.seasonal import STL
 
 import xgboost as xgb
 
-def create_error_corrector(ecm, input_dim, T, output_dim, hidden_dim, device):
+
+class CombinedMAEMSELoss(nn.Module):
+    def __init__(self, alpha=0.5):
+        super().__init__()
+        self.alpha = alpha
+        self.mse = nn.MSELoss()
+        self.mae = nn.L1Loss()
+
+    def forward(self, pred, target):
+        return self.alpha * self.mse(pred, target) + (1 - self.alpha) * self.mae(pred, target)
+
+def create_error_corrector(ecm, input_dim, T, output_dim, hidden_dim, device, loss_type="SmoothL1"):
     """
     Create error corrector model and training components based on ecm type.
 
@@ -72,7 +84,19 @@ def create_error_corrector(ecm, input_dim, T, output_dim, hidden_dim, device):
 
     # Setup optimizer, loss, scheduler for PyTorch models
     optimizer = torch.optim.Adam(modelerr.parameters(), lr=1e-2)
-    loss_fn = nn.SmoothL1Loss()
+
+    if loss_type == "MSE":
+        loss_fn = nn.MSELoss()
+    elif loss_type == "MAE":
+        loss_fn = nn.L1Loss()
+    elif loss_type == "SmoothL1":
+        loss_fn = nn.SmoothL1Loss()
+    elif loss_type == "betaSmoothL1":
+        loss_fn = nn.SmoothL1Loss(beta=0.5)
+    else:   
+        raise ValueError(f"Unknown loss_type: {loss_type}")
+
+    # loss_fn = CombinedMAEMSELoss(alpha=0.5)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', patience=50, factor=0.5, verbose=True)
 
     return modelerr, optimizer, loss_fn, scheduler, is_torch_model
@@ -395,6 +419,28 @@ def moving_avg(x, kernel_size=25):
     x2 = x.permute(0,2,1).reshape(b*c, 1, t)           # [B*C,1,T]
     trend = F.conv1d(x2, filt, padding=pad).reshape(b, c, t).permute(0,2,1)
     return trend
+
+def decompose_stl_1d(x: np.ndarray,
+                     period: int,
+                     seasonal: int = None,
+                     trend: int = None,
+                     robust: bool = True):
+    """
+    Decompose a 1D series x into trend & seasonal with STL.
+    x: numpy array of shape (T,)
+    period: seasonal period (e.g. 24 for hourly→daily)
+    seasonal: span for seasonal LOESS (odd int ≥ 3). If None, defaults.
+    trend: span for trend LOESS. If None, defaults.
+    robust: whether to down‑weight outliers
+    Returns: (trend: np.ndarray shape (T,),
+              seasonal: np.ndarray shape (T,))
+    """
+    stl = STL(x, period=period,
+              seasonal=seasonal,
+              trend=trend,
+              robust=robust)
+    res = stl.fit()
+    return res.trend, res.seasonal
 
 
 

@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 
 model_name=TimeXer
 
@@ -39,9 +39,11 @@ python -u run.py \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
   --down_sampling_window $down_sampling_window \
-  --use_ar $2 \
   --errcor_coef $4 \
-  --err_h 32
+  --err_h 32 \
+  --ecm_model $5\
+  --season_coef $6 \
+  --trend_coef $7 \
 
 # python -u run.py \
 #   --task_name long_term_forecast \

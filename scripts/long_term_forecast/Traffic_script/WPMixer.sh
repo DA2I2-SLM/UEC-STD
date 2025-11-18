@@ -1,5 +1,5 @@
 
-export CUDA_VISIBLE_DEVICES=0
+#export CUDA_VISIBLE_DEVICES=0
 
 # Model name
 model_name=WPMixer
