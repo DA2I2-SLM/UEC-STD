@@ -332,3 +332,4 @@ class Decoder(nn.Module):
         growth_repr = sum(growth_repr)
         season_repr = sum(season_repr)
         return self.pred(growth_repr), self.pred(season_repr)
+

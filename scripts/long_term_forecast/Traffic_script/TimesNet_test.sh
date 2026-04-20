@@ -3,15 +3,17 @@
 model_name=TimesNet
 
 seq_len=96
-e_layers=3
+e_layers=2
+enc_in=7
+c_out=7
 down_sampling_layers=3
 down_sampling_window=2
 learning_rate=0.01
-d_model=32
-d_ff=64
-batch_size=8
+d_model=16
+d_ff=32
 train_epochs=10
 patience=10
+batch_size=16
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -28,9 +30,9 @@ python -u run.py \
   --e_layers $e_layers \
   --d_layers 1 \
   --factor 3 \
-  --enc_in 862 \
-  --dec_in 862 \
-  --c_out 862 \
+  --enc_in 7 \
+  --dec_in 7 \
+  --c_out 7 \
   --des 'Exp' \
   --itr 1 \
   --d_model $d_model \
@@ -48,6 +50,7 @@ python -u run.py \
   --ecm_model $5\
   --season_coef $6 \
   --trend_coef $7 \
+  --kernel_size 5 \
 
 # python -u run.py \
 #   --task_name long_term_forecast \
@@ -64,9 +67,9 @@ python -u run.py \
 #   --e_layers 2 \
 #   --d_layers 1 \
 #   --factor 3 \
-#   --enc_in 862 \
-#   --dec_in 862 \
-#   --c_out 862 \
+#   --enc_in 7 \
+#   --dec_in 7 \
+#   --c_out 7 \
 #   --d_model 512 \
 #   --d_ff 512 \
 #   --top_k 5 \
@@ -88,9 +91,9 @@ python -u run.py \
 #   --e_layers 2 \
 #   --d_layers 1 \
 #   --factor 3 \
-#   --enc_in 862 \
-#   --dec_in 862 \
-#   --c_out 862 \
+#   --enc_in 7 \
+#   --dec_in 7 \
+#   --c_out 7 \
 #   --d_model 512 \
 #   --d_ff 512 \
 #   --top_k 5 \
@@ -112,9 +115,9 @@ python -u run.py \
 #   --e_layers 2 \
 #   --d_layers 1 \
 #   --factor 3 \
-#   --enc_in 862 \
-#   --dec_in 862 \
-#   --c_out 862 \
+#   --enc_in 7 \
+#   --dec_in 7 \
+#   --c_out 7 \
 #   --d_model 512 \
 #   --d_ff 512 \
 #   --top_k 5 \

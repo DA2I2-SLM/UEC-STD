@@ -12,6 +12,7 @@ d_ff=32
 train_epochs=10
 patience=10
 batch_size=16
+kernel_size=25
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -38,7 +39,8 @@ python -u run.py \
   --batch_size 128 \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size \
 
 
 python -u run.py \
@@ -66,7 +68,8 @@ python -u run.py \
   --batch_size 128 \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size \
 
 
 python -u run.py \
@@ -94,7 +97,8 @@ python -u run.py \
   --batch_size 128 \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size \
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -121,4 +125,6 @@ python -u run.py \
   --batch_size 128 \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size \
+

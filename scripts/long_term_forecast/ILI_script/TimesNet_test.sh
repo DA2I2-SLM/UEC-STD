@@ -2,97 +2,46 @@
 
 model_name=TimesNet
 
+seq_len=36
+e_layers=2
+down_sampling_layers=3
+down_sampling_window=2
+learning_rate=0.01
+d_model=16
+d_ff=32
+train_epochs=10
+patience=10
+batch_size=128
+
 python -u run.py \
   --task_name long_term_forecast \
   --is_training $1 \
-   --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \  --data_path national_illness.csv \
-  --model_id ili_36_$3 \
+  --root_path /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \
+  --data_path ILI.csv \
+  --model_id ILI_${seq_len}_$3 \
   --model $model_name \
   --data custom \
   --features M \
-  --seq_len 36 \
-  --label_len 18 \
+  --seq_len $seq_len \
+  --label_len 0 \
   --pred_len $3 \
-  --e_layers 2 \
-  --d_layers 1 \
-  --factor 3 \
+  --e_layers $e_layers \
   --enc_in 7 \
-  --dec_in 7 \
   --c_out 7 \
-  --d_model 768 \
-  --d_ff 768 \
-  --top_k 5 \
   --des 'Exp' \
   --itr 1 \
+  --d_model $d_model \
+  --d_ff $d_ff \
+  --batch_size $batch_size \
+  --learning_rate $learning_rate \
+  --train_epochs $train_epochs \
+  --patience $patience \
+  --down_sampling_layers $down_sampling_layers \
+  --down_sampling_method avg \
+  --down_sampling_window $down_sampling_window \
   --use_ar $2 \
   --errcor_coef $4 \
-  --err_h 4
-
-# python -u run.py \
-#   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path national_illness.csv \
-#   --model_id ili_36_36 \
-#   --model $model_name \
-#   --data custom \
-#   --features M \
-#   --seq_len 36 \
-#   --label_len 18 \
-#   --pred_len 36 \
-#   --e_layers 2 \
-#   --d_layers 1 \
-#   --factor 3 \
-#   --enc_in 7 \
-#   --dec_in 7 \
-#   --c_out 7 \
-#   --d_model 768 \
-#   --d_ff 768 \
-#   --top_k 5 \
-#   --des 'Exp' \
-#   --itr 1
-
-# python -u run.py \
-#   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path national_illness.csv \
-#   --model_id ili_36_48 \
-#   --model $model_name \
-#   --data custom \
-#   --features M \
-#   --seq_len 36 \
-#   --label_len 18 \
-#   --pred_len 48 \
-#   --e_layers 2 \
-#   --d_layers 1 \
-#   --factor 3 \
-#   --enc_in 7 \
-#   --dec_in 7 \
-#   --c_out 7 \
-#   --d_model 768 \
-#   --d_ff 768 \
-#   --top_k 5 \
-#   --des 'Exp' \
-#   --itr 1
-
-# python -u run.py \
-#   --task_name long_term_forecast \
-#   --is_training 1 \
-#    --root_path  /scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/dataset/ \#   --data_path national_illness.csv \
-#   --model_id ili_36_60 \
-#   --model $model_name \
-#   --data custom \
-#   --features M \
-#   --seq_len 36 \
-#   --label_len 18 \
-#   --pred_len 60 \
-#   --e_layers 2 \
-#   --d_layers 1 \
-#   --factor 3 \
-#   --enc_in 7 \
-#   --dec_in 7 \
-#   --c_out 7 \
-#   --d_model 768 \
-#   --d_ff 768 \
-#   --top_k 5 \
-#   --des 'Exp' \
-#   --itr 1
+  --err_h 32 \
+  --ecm_model $5 \
+  --season_coef $6 \
+  --trend_coef $7 \

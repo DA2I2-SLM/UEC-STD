@@ -1,173 +1,170 @@
 # TimeSeriesECM
-Timeseries With Error Correction Model (Autoregressive Decoding)
 
-Reference Repo: https://github.com/thuml/Time-Series-Library
+TimeSeriesECM augments a forecasting backbone with an **Error Correction Module (ECM)** that learns to predict the residual between the backbone forecast and the ground truth, then adds a scaled version of that residual back to improve accuracy on long-term time series forecasting.
 
-## 1. Setup
+Built on top of [Time-Series-Library](https://github.com/thuml/Time-Series-Library).
+
+---
+
+## Installation
+
 ```bash
-# Install Python
 conda create -n timeecm python=3.8
 conda activate timeecm
-# Install other dependencies
 pip install -r requirements.txt
 ```
 
-## 2. Dataset Preparation
-```bash
-cd TimeSeriesECM
-mkdir scratch
-mkdir scratch/dataset/
-```
-Download and unzip the dataset https://github.com/thuml/Time-Series-Library
+## Supported Datasets
 
-## 3. Experiment Steps
-Follow these steps to create and evaluate ECM
-### 3.1 Train the backbone model
-For example, train TimeMixer with ETTh1 dataset:
+Scripts are provided for the following benchmark datasets:
+
+| Dataset | Script directory |
+|---|---|
+| ETT (ETTh1, ETTh2, ETTm1, ETTm2) | `scripts/long_term_forecast/ETT_script/` |
+| ECL (Electricity) | `scripts/long_term_forecast/ECL_script/` |
+| Weather | `scripts/long_term_forecast/Weather_script/` |
+| Traffic | `scripts/long_term_forecast/Traffic_script/` |
+| Exchange Rate | `scripts/long_term_forecast/Exchange_script/` |
+| Solar Energy | `scripts/long_term_forecast/Solar_script/` |
+| ILI | `scripts/long_term_forecast/ILI_script/` |
+
+Use the standard benchmark dataset layout expected by Time-Series-Library. Point `--root_path` to the dataset directory and `--data_path` to the target CSV file.
+
+## Supported Backbone Models
+
+The ECM module supports the following backbone architectures:
+
+iTransformer, Mamba, PatchTST, TimeBridge, TimeMixer, TimesNet, TimeXer, TSMixer
+
+Other models are available as plain backbone-only baselines (no ECM) via the non-`_test` scripts.
+
+---
+
+## Quick Start
+
+### Step 1 — Train the backbone model
+
+```bash
+bash ./scripts/long_term_forecast/<Dataset_script>/<Model>_<Dataset>.sh
+```
+
+Example:
+
 ```bash
 bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1.sh
+bash ./scripts/long_term_forecast/Weather_script/TimeMixer.sh
+bash ./scripts/long_term_forecast/ECL_script/iTransformer.sh
 ```
-The checkpoints and logs should be found in ./scratch/s223669184/project_data/Grant25/TimeSeriesECM/checkpoints and ./scratch/results
 
-### 3.2 Train the ECM model without seasonal and trend
-First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
-For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
+### Step 2 — Train and evaluate the ECM branch
+
 ```bash
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "linear" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "logistic" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "random_forest" 0 0 
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "xgboost" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "lstm" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "GRU" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "CNN" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 3 1 336 1 "TF" 0 0
+bash ./scripts/long_term_forecast/<Dataset_script>/<Model>_<Dataset>_test.sh <mode> <use_ar> <pred_len> <errcor_coef> <ecm_model> <season_coef> <trend_coef>
 ```
-/scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/checkpoints/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0
 
-Argument explanation:
-- 3: A special mode of doing inference that generates data for training ECM and conducts the training
-- 1: Turn on autoregressive decoding. It should be always 1. If it is set to 0, the input for autoregressive decoding will be the ground truth.
-- 336: The length of the decoding sequence. It should be multiples of the unit prediction length (eg., 96)
-- 1: Turn on the rate of error-correcting. It is not used in mode 3
-- 0 0: These are the seasonal and trend coefficient (set to 0 means not modifying the weight of the loss function). They will not be used here (only be used in mode 5 and 6).
+Example:
 
-The ECM model is saved in the same checkpoint directory as the backbone model.
- 
-
-
-### 3.3 Evaluate the ECM model without seasonal and trend
-Run the ECM script with different arguments
 ```bash
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "linear" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "logistic" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "random_forest" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "xgboost" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "lstm" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "GRU" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "CNN" 0 0
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 "TF" 0 0
-```
-Argument explanation:
-- 4: A special mode of doing inference that evaluates the ECM
-- 1: Turn on autoregressive decoding (must be 1).
-- 336: the testing length (336) can be different from the training length (336).
-- 1: It can be any number between 0 and 1. 0 means not using ECM, and 1 means fully using ECM. The number in between specifies how much ECM is used.
-- 0 0: These are the seasonal and trend coefficient (set to 0 means not modifying the weight of the loss function). They will not be used here (only be used in mode 5 and 6).
-  
-To do a mass evaluation with different decoding lengths and error-correcting rates:
-```python
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" --seasonal_trend False --season_coef 0 ----trend_coef 0 
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "logistic"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "random_forest"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "xgboost"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "lstm"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "GRU"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "CNN"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "TF" 
-```
-```
-python run_full.py \
-  --data Weather,ETTh1,Traffic \
-  --data_type Weather,ETT,Traffic\
-  --model TimeMixer,iTransformer,Mamba,TSMixer \
-  --ecm linear,logistic,random_forest,xgboost,lstm,CNN
+bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 4 1 336 1 linear 0 0
+bash ./scripts/long_term_forecast/Weather_script/TimeMixer_test.sh 4 1 336 1 linear 0 0
 ```
 
-The results should be found in ./scratch/infer_results/
+---
 
-### 3.4 Train the ECM model with seasonal and trend components 
-First, create the run script for ECM. The run script is very similar to the backbone training script (e.g., TimeMixer_ETTh1.sh). 
-For example, the ECM script for TimeMixer and Etth1 is TimeMixer_ETTh1_test.sh. Then, run the following:
-```bash
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "linear" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "logistic" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "random_forest" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "xgboost" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "lstm" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "GRU" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "CNN" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 5 1 336 1 "TF" $season_coef $trend_coef
+## Script Arguments
+
+The `*_test.sh` scripts accept positional arguments in this order:
+
+| Position | Argument | Description |
+|---|---|---|
+| 1 | `mode` | Run mode (see table below) |
+| 2 | `use_ar` | Autoregressive decoding flag (`1` = enabled) |
+| 3 | `pred_len` | Forecast horizon length |
+| 4 | `errcor_coef` | Error-correction coefficient (see below) |
+| 5 | `ecm_model` | ECM model name (e.g. `linear`) |
+| 6 | `season_coef` | Seasonal component coefficient |
+| 7 | `trend_coef` | Trend component coefficient |
+
+### Run modes
+
+| Mode | Description |
+|---|---|
+| `1` | Train backbone, then evaluate on test set |
+| `0` | Evaluate backbone on test set (no training) |
+| `2` | Autoregressive rolling-window inference with backbone only |
+| `3` | Train ECM from backbone-generated features |
+| `4` | Evaluate ECM |
+| `5` | Train ECM with seasonal and trend components |
+| `6` | Evaluate ECM with seasonal and trend components |
+
+---
+
+## Error-Correction Coefficient
+
+The `errcor_coef` controls how strongly the ECM residual is blended into the backbone forecast:
+
+- `0` — disables error correction; returns the backbone forecast unchanged
+- `> 0` — scales the ECM-predicted residual added to the backbone forecast
+
+### Automatic coefficient selection
+
+Instead of choosing the coefficient manually, the code searches for the best value on a held-out validation split during modes `3` and `5`. Pass a comma-separated list of candidate values via `--error_flags` (default: `0.01,0.03,0.05,0.07,0.1,0.3,0.5,0.7,1`). Each candidate is evaluated against both MSE and MAE criteria, and the best-performing coefficient is encoded in the saved ECM checkpoint name.
+
+---
+
+## CLI Reference
+
+Key flags defined in [run.py](run.py):
+
+| Flag | Description |
+|---|---|
+| `--task_name` | Task type (e.g. `long_term_forecast`) |
+| `--is_training` | `1` for train-then-test, `0` for inference only |
+| `--model_id`, `--model` | Experiment ID and backbone model name |
+| `--data`, `--root_path`, `--data_path` | Dataset name and file paths |
+| `--seq_len`, `--label_len`, `--pred_len` | Input, label, and forecast lengths |
+| `--use_ar` | Enable autoregressive decoding |
+| `--checkpoints` | Directory for saving model checkpoints |
+| `--alpha` | Temporal smoothing factor between consecutive autoregressive steps |
+| `--errcor_coef` | Runtime error-correction coefficient |
+| `--ecm_model` | ECM model architecture (e.g. `linear`, `CNN`, `RNN`) |
+| `--err_h` | Hidden dimension of the ECM model |
+| `--kernel_size` | Kernel size for moving-average decomposition (seasonal/trend ECM) |
+| `--season_coef`, `--trend_coef` | Loss weights for seasonal and trend components in ECM training |
+| `--error_flags` | Comma-separated candidates for automatic coefficient selection |
+| `--wandb` | Enable Weights & Biases logging (`True`/`False`) |
+| `--use_dtw` | Include DTW metric in evaluation |
+
+---
+
+## Outputs
+
+| Output | Description |
+|---|---|
+| `result_long_term_forecast.txt` | Text summary of all evaluation runs |
+| `metrics.npy` | Saved metric arrays (MAE, MSE, RMSE, MAPE, MSPE) |
+| `pred.npy` / `true.npy` | Predictions and ground truth |
+| PDF plots | Per-setting figures saved under `./scratch/` |
+| ECM results (modes 3–4) | Written to `./scratch/infer_results/<setting>-<ecm>/` |
+| ECM results (modes 5–6) | Written to `./scratch/infer_results_seasonal_<s>_trend_<t>_<k>/<setting>-<ecm>/` |
+
+---
+
+## Repository Structure
+
 ```
-/scratch/s223669184/project_data/Grant25/TimeSeriesECM/dataset/checkpoints/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0
-
-Argument explanation:
-- 5: A special mode of doing inference that generates data for training ECM with seasonal and trend components and conducts the training
-- 1: Turn on autoregressive decoding. It should be always 1. If it is set to 0, the input for autoregressive decoding will be the ground truth.
-- 336: The length of the decoding sequence. It should be multiples of the unit prediction length (eg., 96)
-- 1: Turn on the rate of error-correcting. It is not used in mode 3
-- $season_coef: Is the coefficient control the weight of the seasonal loss (Default: 0.5)
-- $trend_coef: Is the coefficient control the weight of the trend loss (Default: 0.5)
-
-
-The ECM model is saved in the same checkpoint directory as the backbone model.
-
-### 3.5 Evaluate the ECM model with seasonal and trend components
-Run the ECM script with different arguments
-```bash
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "linear" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "logistic" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "random_forest" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "xgboost" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "lstm" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "GRU" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "CNN" $season_coef $trend_coef
-bash ./scripts/long_term_forecast/ETT_script/TimeMixer_ETTh1_test.sh 6 1 336 1 "TF" $season_coef $trend_coef
+models/          # Backbone model implementations
+layers/          # Shared layer components
+exp/             # Experiment runners (training, testing, ECM inference)
+data_provider/   # Dataset loading utilities
+scripts/
+  long_term_forecast/
+    ETT_script/          # ETTh1/h2/m1/m2 scripts
+    ECL_script/          # Electricity dataset scripts
+    Weather_script/      # Weather dataset scripts
+    Traffic_script/      # Traffic dataset scripts
+    Exchange_script/     # Exchange rate dataset scripts
+    Solar_script/        # Solar energy dataset scripts
+    ILI_script/          # ILI dataset scripts
+run.py           # Main entry point
 ```
-Argument explanation:
-- 6: A special mode of doing inference that evaluates the ECM with seasonal and trend components
-- 1: Turn on autoregressive decoding (must be 1).
-- 336: the testing length (336) can be different from the training length (336).
-- 1: It can be any number between 0 and 1. 0 means not using ECM, and 1 means fully using ECM. The number in between specifies how much ECM is used.
-- $season_coef: Is the coefficient control the weight of the seasonal loss (Default: 0.5)
-- $trend_coef: Is the coefficient control the weight of the trend loss (Default: 0.5)
-  
-To do a mass evaluation with different decoding lengths and error-correcting rates:
-```python
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" --seasonal_trend False --season_coef 0 --trend_coef 0  or
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "linear" --seasonal_trend True --season_coef $season_coef --trend_coef $trend_coef  
-Similarly:
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "logistic"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "random_forest"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "xgboost"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "lstm"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "GRU"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "CNN"
-python run_eval.py --data ETTh1 --model TimeMixer --ecm "TF" 
-```
-```
-python run_full.py \
-  --data Weather,ETTh1,Traffic \
-  --data_type Weather,ETT,Traffic\
-  --model TimeMixer,iTransformer,Mamba,TSMixer \
-  --ecm linear,logistic,random_forest,xgboost,lstm,CNN
-```
-
-The results should be found in ./scratch/infer_results/
-
-### 3.6 Report the ECM evaluation
-Report the TimeMixer ECM on ETTh1 dataset
-```python
-python report.py --dir ./scratch/infer_results/long_term_forecast_ETTh1_96_96_TimeMixer_ETTh1_ftM_sl96_ll0_pl96_dm16_nh8_el2_dl1_df32_expand2_dc4_fc1_ebtimeF_dtTrue_Exp_0/
-```
-
-

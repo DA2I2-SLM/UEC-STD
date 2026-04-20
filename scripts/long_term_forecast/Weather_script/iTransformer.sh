@@ -12,6 +12,7 @@ d_ff=32
 batch_size=16
 train_epochs=20
 patience=10
+kernel_size=25
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -41,7 +42,8 @@ python -u run.py \
   --patience $patience \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -70,7 +72,8 @@ python -u run.py \
   --patience $patience \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -100,7 +103,8 @@ python -u run.py \
   --patience $patience \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size
 
 python -u run.py \
   --task_name long_term_forecast \
@@ -130,4 +134,5 @@ python -u run.py \
   --patience $patience \
   --down_sampling_layers $down_sampling_layers \
   --down_sampling_method avg \
-  --down_sampling_window $down_sampling_window
+  --down_sampling_window $down_sampling_window \
+  --kernel_size $kernel_size

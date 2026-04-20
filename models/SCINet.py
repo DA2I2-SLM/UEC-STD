@@ -19,7 +19,7 @@ class Splitting(nn.Module):
 
 
 class CausalConvBlock(nn.Module):
-    def __init__(self, d_model, kernel_size=5, dropout=0.0):
+    def __init__(self, d_model, kernel_size=25, dropout=0.0):
         super(CausalConvBlock, self).__init__()
         module_list = [
             nn.ReplicationPad1d((kernel_size - 1, kernel_size - 1)),
@@ -40,7 +40,7 @@ class CausalConvBlock(nn.Module):
 
 
 class SCIBlock(nn.Module):
-    def __init__(self, d_model, kernel_size=5, dropout=0.0):
+    def __init__(self, d_model, kernel_size=25, dropout=0.0):
         super(SCIBlock, self).__init__()
         self.splitting = Splitting()
         self.modules_even, self.modules_odd, self.interactor_even, self.interactor_odd = [CausalConvBlock(d_model) for _ in range(4)]
@@ -60,7 +60,7 @@ class SCIBlock(nn.Module):
 
 
 class SCINet(nn.Module):
-    def __init__(self, d_model, current_level=3, kernel_size=5, dropout=0.0):
+    def __init__(self, d_model, current_level=3, kernel_size=25, dropout=0.0):
         super(SCINet, self).__init__()
         self.current_level = current_level
         self.working_block = SCIBlock(d_model, kernel_size, dropout)

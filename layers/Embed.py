@@ -188,3 +188,21 @@ class PatchEmbedding(nn.Module):
         # Input encoding
         x = self.value_embedding(x) + self.position_embedding(x)
         return self.dropout(x), n_vars
+
+
+class PatchEmbed(nn.Module):
+    def __init__(self, args, num_p=1, d_model=None):
+        super(PatchEmbed, self).__init__()
+        self.num_p = num_p
+        self.patch = args.seq_len // self.num_p
+        self.d_model = args.d_model if d_model is None else d_model
+
+        self.proj = nn.Sequential(
+            nn.Linear(self.patch, self.d_model, False),
+            nn.Dropout(args.dropout)
+        )
+
+    def forward(self, x, x_mark):
+        x = torch.cat([x, x_mark], dim=-1).transpose(-1, -2)
+        x = self.proj(x.reshape(*x.shape[:-1], self.num_p, self.patch))
+        return x

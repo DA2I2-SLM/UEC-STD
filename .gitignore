@@ -178,3 +178,5 @@ cython_debug/
 .pypirc
 
 scratch/
+average_metrics.csv
+/run_*.sh

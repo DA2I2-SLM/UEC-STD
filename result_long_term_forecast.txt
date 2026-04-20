@@ -1,3 +1,0 @@
-long_term_forecast_ECL_96_96_TimeXer_custom_ftM_sl96_ll48_pl96_dm512_nh8_el4_dl1_df512_expand2_dc4_fc3_ebtimeF_dtTrue_Exp_0  
-mse:0.15912528336048126, mae:0.2668173015117645, dtw:-999
-

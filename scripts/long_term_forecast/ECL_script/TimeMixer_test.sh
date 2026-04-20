@@ -48,6 +48,8 @@ python -u run.py \
   --ecm_model $5 \
   --season_coef $6 \
   --trend_coef $7 \
+  --kernel_size 5 \
+
 
 # python -u run.py \
 #   --task_name long_term_forecast \

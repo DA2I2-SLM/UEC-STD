@@ -8,6 +8,7 @@ import warnings
 import numpy as np
 import math
 import random
+import copy
 
 from tqdm import tqdm
 import wandb
@@ -16,14 +17,12 @@ from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual, visualm
 from utils.metrics import metric
-from utils.dtw_metric import dtw, accelerated_dtw
-from utils.augmentation import run_augmentation, run_augmentation_single
-from .utils_ECM import create_error_corrector, moving_avg, decompose_stl_1d
+from utils.dtw_metric import accelerated_dtw
+from torch.utils.data import TensorDataset, DataLoader, random_split
+from .utils_ECM import create_error_corrector, moving_avg
 
 
 warnings.filterwarnings('ignore')
-
-HOME_DIR = "/scratch/s223669184/project_data/Grant25/TimeSeriesECM"
 
 
 class Exp_Long_Term_Forecast(Exp_Basic):
@@ -56,59 +55,75 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         else:
             raise ValueError(f"Unknown criterion: {criterion_name}")
         return criterion
- 
 
-    def vali(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model=None):
-        total_loss = []
-        self.model.eval()
-        
-        with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
-                batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float()
+    def _resolve_backbone_setting(self, setting):
+        """Return (backbone_setting, model_pred_len) with pred_len set to seq_len."""
+        model_pred_len = self.args.seq_len
+        parts = setting.split("_")
+        parts[5] = str(model_pred_len)
+        parts[11] = "pl" + str(model_pred_len)
+        return "_".join(parts), model_pred_len
 
-                batch_x_mark = batch_x_mark.float().to(self.device)
-                batch_y_mark = batch_y_mark.float().to(self.device)
+    def _backbone_forward(self, batch_x, batch_x_mark, dec_inp, batch_y_mark):
+        """Single forward pass through the backbone, handling AMP and attention output."""
+        if self.args.use_amp:
+            with torch.cuda.amp.autocast():
+                out = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+        else:
+            out = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+        if getattr(self.args, 'output_attention', False):
+            out = out[0]
+        return out
 
-                # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+    def _make_dec_inp(self, batch_y):
+        """Build the zero-padded decoder input tensor."""
+        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
+        return torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
 
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+    def _inverse_transform(self, data_set, arr):
+        """Inverse-scale arr if the dataset uses scaling."""
+        if data_set.scale and self.args.inverse:
+            shape = arr.shape
+            arr = data_set.inverse_transform(arr.reshape(shape[0] * shape[1], -1)).reshape(shape)
+        return arr
 
-                pred = outputs.detach().cpu()
-                true = batch_y.detach().cpu()
+    def _candidate_error_coeffs(self, fallback):
+        """Return error-coefficient candidates from CLI args or a fallback list."""
+        error_flags = getattr(self.args, "error_flags", None)
+        if isinstance(error_flags, str) and error_flags.strip():
+            return [float(x) for x in error_flags.split(",") if x.strip()]
+        if error_flags:
+            return [float(x) for x in error_flags]
+        return list(fallback)
 
-                if error_coeff == 0:
-                    loss = criterion(pred, true)
-                else:
-                    f_dim = -1 if self.args.features == 'MS' else 0
+    def _compute_dtw(self, preds, trues):
+        """Compute mean DTW distance; returns 'Not calculated' if disabled."""
+        if not self.args.use_dtw:
+            return 'Not calculated'
+        manhattan = lambda x, y: np.abs(x - y)
+        dtw_list = []
+        for i in range(preds.shape[0]):
+            if i % 100 == 0:
+                print(f"calculating dtw iter: {i}")
+            d, _, _, _ = accelerated_dtw(preds[i].reshape(-1, 1), trues[i].reshape(-1, 1), dist=manhattan)
+            dtw_list.append(d)
+        return np.array(dtw_list).mean()
 
-                    meinput = torch.cat([batch_x, outputs[:, -self.args.pred_len:, f_dim:]], dim=-1)
+    def _save_results(self, setting, folder_path, preds, trues):
+        """Compute metrics, append to summary txt, and save npy arrays."""
+        dtw = self._compute_dtw(preds, trues)
+        mae, mse, rmse, mape, mspe = metric(preds, trues)
+        print(f'mse:{mse}, mae:{mae}, dtw:{dtw}')
+        os.makedirs(folder_path, exist_ok=True)
+        with open("result_long_term_forecast.txt", 'a') as f:
+            f.write(f"{setting}  \n")
+            f.write(f'mse:{mse}, mae:{mae}, dtw:{dtw}\n\n')
+        np.save(os.path.join(folder_path, 'metrics.npy'), np.array([mae, mse, rmse, mape, mspe]))
+        np.save(os.path.join(folder_path, 'pred.npy'), preds)
+        np.save(os.path.join(folder_path, 'true.npy'), trues)
+        return mae, mse, rmse, mape, mspe, dtw
 
-                    if is_torch_model:
-                        perr = error_model(meinput)
 
-                    else:
-                        perr = error_model.predict(meinput.cpu().numpy())
-                        perr = torch.tensor(perr).to(self.device)
-
-                    outputs_pred = outputs + perr*error_coeff
-
-                    loss = criterion(outputs_pred.to("cpu"), true)
-
-                total_loss.append(loss)
-        total_loss = np.average(total_loss)
-        self.model.train()
-        return total_loss
 
     
     def train(self, setting):
@@ -146,27 +161,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
                 # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                dec_inp = self._make_dec_inp(batch_y)
 
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
-                        f_dim = -1 if self.args.features == 'MS' else 0
-                        outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                        batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                        loss = criterion(outputs, batch_y)
-                        train_loss.append(loss.item())
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                    batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-                    loss = criterion(outputs, batch_y)
-                    train_loss.append(loss.item())
+                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+                loss = criterion(outputs, batch_y)
+                train_loss.append(loss.item())
 
                 if (i + 1) % 100 == 0:
                     print("\titers: {0}, epoch: {1} | loss: {2:.7f}".format(i + 1, epoch + 1, loss.item()))
@@ -203,15 +207,62 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         return self.model
 
+    def vali(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model=None):
+        total_loss = []
+        self.model.eval()
+
+        with torch.no_grad():
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+                batch_x = batch_x.float().to(self.device)
+                batch_y = batch_y.float()
+
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
+
+                # decoder input
+                dec_inp = self._make_dec_inp(batch_y)
+                # encoder - decoder
+                outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
+                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = outputs[:, -self.args.pred_len:, f_dim:]
+                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
+
+                pred = outputs.detach().cpu()
+                true = batch_y.detach().cpu()
+
+                if error_coeff == 0:
+                    loss = criterion(pred, true)
+                else:
+                    f_dim = -1 if self.args.features == 'MS' else 0
+
+                    meinput = torch.cat([batch_x, outputs], dim=-1)
+
+                    if is_torch_model:
+                        perr = error_model(meinput)
+
+                    else:
+                        perr = error_model.predict(meinput.cpu().numpy())
+                        perr = torch.tensor(perr).to(self.device)
+
+                    outputs_pred = outputs + perr*error_coeff
+
+                    loss = criterion(outputs_pred.to("cpu"), true)
+
+                total_loss.append(loss.item())
+            total_loss = np.average(total_loss)
+        self.model.train()
+        return total_loss
+
     def test(self, setting, test=0):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+            self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
 
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/test_results/' + setting + '/'
+        folder_path = './test_results/' + setting + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -225,14 +276,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
                 # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                dec_inp = self._make_dec_inp(batch_y)
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, :]
@@ -271,37 +317,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/results/' + setting + '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
+        folder_path = './results/' + setting + '/'
 
-        # dtw calculation
-        if self.args.use_dtw:
-            dtw_list = []
-            manhattan_distance = lambda x, y: np.abs(x - y)
-            for i in range(preds.shape[0]):
-                x = preds[i].reshape(-1, 1)
-                y = trues[i].reshape(-1, 1)
-                if i % 100 == 0:
-                    print("calculating dtw iter:", i)
-                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                dtw_list.append(d)
-            dtw = np.array(dtw_list).mean()
-        else:
-            dtw = 'Not calculated'
-
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open(f"result_long_term_forecast.txt", 'a')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f.write('\n')
-        f.write('\n')
-        f.close()
-
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        self._save_results(setting, folder_path, preds, trues)
 
         return
     
@@ -309,11 +327,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         test_data, test_loader = self._get_data(flag='test')
         if test:
             print('loading model')
-            self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+            self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
 
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + "-" + ecm + '/'
+        folder_path = './scratch/infer_results/' + setting + "-" + ecm + '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
@@ -332,26 +350,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     enc_inp = torch.cat([enc_inp[:,1:,:], pred_y[:,:1,:]],  dim=1)
 
                     # enc_inp = torch.cat([enc_inptp_gt,enc_inptd], dim=2)
-                obatch_x  = batch_x
                 oinput = batch_x[:,:,:]
                 if self.args.use_ar:
                     batch_x = enc_inp #Autoregression
                 # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                dec_inp = self._make_dec_inp(batch_y)
+                
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        if self.args.output_attention:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                        else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                
-                outputs = outputs[:,:,:]
-                
-                f_dim = -1 if self.args.features == 'MS' else 0
+                outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
                 outputs = outputs[:, -self.args.pred_len:, :]
                 if i==0:
                     prev_outputs = outputs
@@ -369,6 +376,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
         
         
+                f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, :, f_dim:]
                 batch_y = batch_y[:, :, f_dim:]
 
@@ -378,7 +386,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 preds.append(pred)
                 trues.append(true)
                 poses.append(batch_x[0,-1, :].detach().cpu().numpy())
-                if i % 1 == 0:
+                if i % 20 == 0:
                     input =  batch_x[:,:,:].detach().cpu().numpy()
                     oinput = oinput.detach().cpu().numpy()
                     if test_data.scale and self.args.inverse:
@@ -388,16 +396,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                     gts = []
                     pds = []
-                    gtps = []
-                    pdps = []
 
-                    for ii in range(7):
+                    for ii in range(min(7, true.shape[-1])):
                         gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                         gts.append(gt)
                         pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
                         pds.append(pd)
-                        gtps.append(obatch_x[0,:,ii].detach().cpu().numpy())
-                        pdps.append(batch_x[0,:,ii].detach().cpu().numpy())
                     visualm(gts, pds, os.path.join(folder_path, str(i) + '.pdf'))
                 if i == 200:
                     break
@@ -410,41 +414,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + '-' + ecm + '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        
-        # dtw calculation
-        if self.args.use_dtw:
-            dtw_list = []
-            manhattan_distance = lambda x, y: np.abs(x - y)
-            for i in range(preds.shape[0]):
-                x = preds[i].reshape(-1,1)
-                y = trues[i].reshape(-1,1)
-                if i % 100 == 0:
-                    print("calculating dtw iter:", i)
-                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                dtw_list.append(d)
-            dtw = np.array(dtw_list).mean()
-        else:
-            dtw = -999
-            
+        folder_path = './scratch/infer_results/' + setting + '-' + ecm + '/'
 
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open(f"result_long_term_forecast.txt", 'a')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f.write('\n')
-        f.write('\n')
-        f.close()
-
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        self._save_results(setting, folder_path, preds, trues)
 
         return
-
     def train_infer_batch(self, setting, ecm="linear", error_flags=None, loss_ecm="SmoothL1"):
         """
         Run inference using the backbone model, collect predictions and true values,
@@ -468,35 +442,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         5. Save the best-performing error corrector model.
         """
         # --- Setup and Load Backbone Model ---
-        # model_pred_len = self.args.seq_len
-        # setting_components = setting.split("_")
-        # print(setting_components)
-        # setting_components[5] = str(model_pred_len)
-        # setting_components[11] = "pl"+str(model_pred_len)
-        # setting = "_".join(setting_components)
-        # print(setting)
-
-        # # Load test data
-        # test_data, test_loader = self._get_data(flag='test')
-        # data_pred_len =self.args.pred_len
-        # num_ar = math.ceil(data_pred_len/model_pred_len)
-
-        # # Update model prediction length to match training time
-        # self.args.pred_len = model_pred_len
-
-        # Load backbone model
-        # self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
-        # print('loading model')
-        # self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
-
-
-
-        model_pred_len = self.args.seq_len
-        setting_components = setting.split("_")
-        print(setting_components)
-        setting_components[5] = str(model_pred_len)
-        setting_components[11] = "pl"+str(model_pred_len)
-        setting = "_".join(setting_components)
+        setting, model_pred_len = self._resolve_backbone_setting(setting)
         print(setting)
 
         # Load test data
@@ -525,7 +471,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
 
         data_pred_len = self.args.pred_len
-        num_ar = math.ceil(data_pred_len//model_pred_len)
+        num_ar = math.ceil(data_pred_len/model_pred_len)
         print("Num_ar", num_ar)
 
         # Override pred_len for backbone model prediction (typically to 96)
@@ -533,15 +479,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
-        print(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth'))
+        print(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth'))
 
         # Load backbone model
-        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
 
         # -------------------------------------------------------------------------------------- Inference Phase with Backbone Model --------------------------------------------------------------------------------------
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm +  '/'
+        folder_path = './scratch/infer_results/' + setting + f'-' + ecm +  '/'
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         self.model.eval()
@@ -569,18 +515,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     batch_x = enc_inp #Autoregression
                     
                     # Decoder input
-                    dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                    dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
+                    dec_inp = self._make_dec_inp(batch_y)
 
                     # Model prediction
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            if self.args.output_attention:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                            else:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    else:
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                     
                     outputs = outputs[:,:,:]
                     
@@ -611,7 +549,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     true = batch_y
                     
                     # Store correction data (input = [input, pred], target = error)
-                    correction_inputs.append(torch.cat([torch.tensor(batch_x),torch.tensor(pred_y[:, -self.args.pred_len:, f_dim:]).to(self.device)],dim=-1))
+                    correction_inputs.append(torch.cat([batch_x, pred_y[:, -self.args.pred_len:, f_dim:].to(self.device)], dim=-1))
                     correction_targets.append(torch.tensor(true-pred).to(self.device))
 
                     preds.append(pred)
@@ -628,10 +566,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                         gts = []
                         pds = []
-                        gtps = []
-                        pdps = []
 
-                        for ii in range(7):
+                        for ii in range(min(7, true.shape[-1])):
                             gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                             gts.append(gt)
                             pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
@@ -649,44 +585,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm +  '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        
-        # dtw calculation
-        if self.args.use_dtw:
-            dtw_list = []
-            manhattan_distance = lambda x, y: np.abs(x - y)
-            for i in range(preds.shape[0]):
-                x = preds[i].reshape(-1,1)
-                y = trues[i].reshape(-1,1)
-                if i % 100 == 0:
-                    print("calculating dtw iter:", i)
-                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                dtw_list.append(d)
-            dtw = np.array(dtw_list).mean()
-        else:
-            dtw = -999
-            
+        folder_path = './scratch/infer_results/' + setting + f'-' + ecm +  '/'
 
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open(f"result_long_term_forecast.txt", 'w')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f.write('\n')
-        f.write('\n')
-        f.close()
-
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        self._save_results(setting, folder_path, preds, trues)
         # -------------------------------------------------------------------------------------- Prepare Correction Dataset --------------------------------------------------------------------------------------
         X = torch.cat(correction_inputs, dim=0)  # shape: (N, T, D)
         Y = torch.cat(correction_targets, dim=0)
         print(X.shape)
         print(Y.shape)
-        from torch.utils.data import TensorDataset, DataLoader, random_split
         # Normalize inputs (pred) and targets (error)
         Y_mean = Y.mean(dim=(0, 1), keepdim=True)
         Y_std = Y.std(dim=(0, 1), keepdim=True) + 1e-6
@@ -712,14 +618,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                                                                                         )
 
         if is_torch_model:
-            best_val_loss_MAE = float('inf')  # Initialize best validation loss as infinity
-            best_val_loss_MSE = float('inf')  # Initialize best validation loss as infinity
-            best_model_err_MAE = None
-            best_model_err_MSE = None
-            best_model_err = None   
+            best_model_err = None
             best_val_loss = float('inf')  # Initialize best validation loss as infinity
-            best_i_MAE = 0
-            best_i_MSE = 0
 
             for epoch in range(100):
                 modelerr.train()
@@ -739,57 +639,21 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # Validation phase
                 modelerr.eval()
                 val_loss = 0
-                MSE_loss_total = 0
-                MAE_loss_total = 0
                 with torch.no_grad():
                     for xb, yb in val_loader:
                         pred = modelerr(xb)
                         loss = loss_fn(pred, yb)
 
                         val_loss += loss.item() * xb.size(0)
-                        if self.args.is_training == 7:
-                            MSE_loss = torch.nn.functional.mse_loss(pred, yb)
-                            MAE_loss = torch.nn.functional.l1_loss(pred, yb)
-                            MSE_loss_total += MSE_loss.item() * xb.size(0)  
-                            MAE_loss_total += MAE_loss.item() * xb.size(0)
                 
                 avg_val_loss = val_loss / len(val_loader.dataset)
                 print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
-                if self.args.is_training == 7:
-                    print(f"Epoch {epoch+1} - Validation MSE Loss: {MSE_loss_total/len(val_loader.dataset):.4f}")
-                    print(f"Epoch {epoch+1} - Validation MAE Loss: {MAE_loss_total/len(val_loader.dataset):.4f}")
 
                 # Check if the current validation loss is the best we've seen so far
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
                     # print(f"New best validation loss: {best_val_loss:.4f}.")
-                    best_model_err = modelerr
-                
-                # ---------NEW----------------------------
-            #     modelerr.eval()
-            #     for criterion_name in ["MAE", "MSE"]:
-            #         # print("Searching for best error coefficient using criterion:", criterion_name)
-            #         criterion = self._select_criterion(criterion_name=criterion_name)
-            #         # val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
-
-            #         print("Begin searching for best error coefficient")
-            #         for i in error_flags:
-            #             avg_val_loss = self.vali(ecm_val_data, ecm_val_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model=modelerr)
-            #             if criterion_name == "MAE":
-            #                 if avg_val_loss < best_val_loss_MAE:
-            #                     best_val_loss_MAE = avg_val_loss
-            #                     best_i_MAE = i
-            #                     best_model_err_MAE = modelerr   
-            #                     print(f"New best validation loss: {best_val_loss_MAE:.4f} with coef {i}.")
-            #             elif criterion_name == "MSE":
-            #                 if avg_val_loss < best_val_loss_MSE:
-            #                     best_val_loss_MSE = avg_val_loss
-            #                     best_i_MSE = i
-            #                     best_model_err_MSE = modelerr
-            #                     print(f"New best validation loss: {best_val_loss_MSE:.4f} with coef {i}.")
-            # print("Training complete.")
-                # ---------NEW----------------------------
-
+                    best_model_err = copy.deepcopy(modelerr)
         else:
             # Collect all training data
             train_X, train_Y = [], []
@@ -801,55 +665,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             # Fit the random forest model
             modelerr.fit(train_X, train_Y)
-
-            # Validation
-            # val_X, val_Y = [], []
-            # for xb, yb in val_loader:
-            #     val_X.append(xb.cpu().numpy())
-            #     val_Y.append(yb.cpu().numpy())
-            # val_X = np.concatenate(val_X, axis=0)
-            # val_Y = np.concatenate(val_Y, axis=0)
-
-            # val_pred = modelerr.predict(val_X)
-            # val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
-            # print(f"Validation Loss: {val_loss:.4f}")
-            best_model_err = modelerr
-
-            # ---------NEW----------------------------
-            # for criterion_name in ["MAE", "MSE"]:
-            #     # print("Searching for best error coefficient using criterion:", criterion_name)
-            #     criterion = self._select_criterion(criterion_name=criterion_name)
-            #     # val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
-
-            #     print("Begin searching for best error coefficient")
-            #     for i in error_flags:
-            #         avg_val_loss = self.vali(ecm_val_data, ecm_val_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model=modelerr)
-            #         if criterion_name == "MAE":
-            #             if avg_val_loss < best_val_loss_MAE:
-            #                 best_val_loss_MAE = avg_val_loss
-            #                 best_i_MAE = i
-            #                 best_model_err_MAE = modelerr   
-            #                 print(f"New best validation loss: {best_val_loss_MAE:.4f} with coef {i}.")
-            #         elif criterion_name == "MSE":
-            #             if avg_val_loss < best_val_loss_MSE:
-            #                 best_val_loss_MSE = avg_val_loss
-            #                 best_i_MSE = i
-            #                 best_model_err_MSE = modelerr
-            #                 print(f"New best validation loss: {best_val_loss_MSE:.4f} with coef {i}.")
-            # print("Training complete.")
-
-        if self.args.is_training == 7:
-            print("Finish training error corrector model.")
-            print(f"Epoch {epoch+1} - Validation Loss: {avg_val_loss:.4f}")
-            print(f"Epoch {epoch+1} - Validation MSE Loss: {MSE_loss_total/len(val_loader.dataset):.4f}")
-            print(f"Epoch {epoch+1} - Validation MAE Loss: {MAE_loss_total/len(val_loader.dataset):.4f}")
-            return
+            best_model_err = copy.deepcopy(modelerr)
 
         for criterion_name in ["MAE", "MSE"]:
             print("Searching for best error coefficient using criterion:", criterion_name)
             criterion = self._select_criterion(criterion_name=criterion_name)
-            # val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
-
             best_i = 0
             best_val_loss = float('inf')  # Initialize best validation loss as infinity
             print("Begin searching for best error coefficient")
@@ -862,21 +682,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     print(f"New best validation loss: {best_val_loss:.4f} with coef {i}.")
 
             if is_torch_model:
-                torch.save(best_model_err.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-{criterion_name}.pth'))
+                torch.save(best_model_err.state_dict(), os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-{criterion_name}.pth'))
             else:
-                save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-{criterion_name}.pkl')
+                save_path = os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-{criterion_name}.pkl')
                 joblib.dump(best_model_err, save_path)
-            
-        # if is_torch_model:
-        #     torch.save(best_model_err_MAE.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i_MAE}-MAE.pth'))
-        #     torch.save(best_model_err_MSE.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i_MSE}-MSE.pth'))
-        # else:
-        #     save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i_MAE}-MAE.pkl')
-        #     joblib.dump(best_model_err_MAE, save_path)
-        #     save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i_MSE}-MSE.pkl')
-        #     joblib.dump(best_model_err_MSE, save_path)
-
-
 
     def test_infer_batch(self, setting, ecm="linear"):
         """
@@ -890,12 +699,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             Type of error corrector model used (e.g., 'linear', 'mlp', 'rf').
         """
         # -------------------------------------------------------------------------------------- Load backbone model configuration ----------------------------------------------------------------------------------------
-        model_pred_len = self.args.seq_len
-        setting_components = setting.split("_")
-        print(setting_components)
-        setting_components[5] = str(model_pred_len)
-        setting_components[11] = "pl"+str(model_pred_len)
-        setting = "_".join(setting_components)
+        setting, model_pred_len = self._resolve_backbone_setting(setting)
         print(setting)
 
         # Load test data
@@ -909,7 +713,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         # Load backbone model
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
         # -------------------------------------------------------------------------------------- Load trained error corrector model --------------------------------------------------------------------------------------
 
         input_dim=self.args.enc_in*2
@@ -923,23 +727,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                                                                     )
         
         # Try loading error corrector model using various saved coefficients
-        possible_coeffs = [0, 0.1, 0.3, 0.5, 0.7, 1]
+        possible_coeffs = self._candidate_error_coeffs([0.01, 0.03, 0.05, 0.07, 0.1, 0.3, 0.5, 0.7, 1.0])
         model_loaded = False
+        loaded_any_criterion = False
         for criterion_name in ["MAE", "MSE"]:
+            model_loaded = False
             for coeff in possible_coeffs:
                 try:
                     if is_torch_model:
-                        print("Here1")
-                        print(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth'))
-                        modelerr.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth')))
+                        print(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth'))
+                        modelerr.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth')))
                         modelerr.eval()  # Set to evaluation mode
                         model_loaded = True
                         print("Modelerr loaded successfully.")
                         break
                     else:
-                        print("Here1")
-                        print(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth'))
-                        load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pkl')
+                        print(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth'))
+                        load_path = os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pkl')
                         modelerr = joblib.load(load_path)
                         model_loaded = True 
                         print("Modelerr loaded successfully.")
@@ -947,12 +751,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 except FileNotFoundError:
                     continue
             if not model_loaded:
-                raise FileNotFoundError("No valid modelerr checkpoint found for any coeff and criterion.")
+                print(f"No checkpoint found for criterion {criterion_name}; trying the next criterion.")
+                continue
+
+            loaded_any_criterion = True
 
             # -------------------------------------------------------------------------------------- Begin inference --------------------------------------------------------------------------------------
             preds = []
             trues = []
-            folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
+            folder_path = './scratch/infer_results/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
 
@@ -980,19 +787,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         batch_x = enc_inp #Autoregression
                         
                         # Decoder input
-                        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                        dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                        
+                        dec_inp = self._make_dec_inp(batch_y)
+
                         # Run prediction
-                        # encoder - decoder
-                        if self.args.use_amp:
-                            with torch.cuda.amp.autocast():
-                                if self.args.output_attention:
-                                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                                else:
-                                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                        else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                         
                         f_dim = -1 if self.args.features == 'MS' else 0
 
@@ -1085,54 +883,27 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             print('test shape:', preds.shape, trues.shape)
 
             # result save
-            folder_path = f'{HOME_DIR}/infer_results/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path)
-            
-            # dtw calculation
-            if self.args.use_dtw:
-                dtw_list = []
-                manhattan_distance = lambda x, y: np.abs(x - y)
-                for i in range(preds.shape[0]):
-                    x = preds[i].reshape(-1,1)
-                    y = trues[i].reshape(-1,1)
-                    if i % 100 == 0:
-                        print("calculating dtw iter:", i)
-                    d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                    dtw_list.append(d)
-                dtw = np.array(dtw_list).mean()
-            else:
-                dtw = -999
-                
+            folder_path = './scratch/infer_results/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
 
-            mae, mse, rmse, mape, mspe = metric(preds, trues)
-            print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-            # if self.args.errcor_coef > 0:
-            #     f = open(f"{folder_path}/metrics-{data_pred_len}-{coeff}.txt", 'w')
-            # else:
-            f = open(f"{folder_path}/metrics-{data_pred_len}-{self.args.errcor_coef}.txt", 'w')
-            f.write(setting + "  \n")
-            f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-            f.write('\n')
-            f.write('\n')
-            f.close()
+            mae, mse, rmse, mape, mspe, dtw = self._save_results(setting, folder_path, preds, trues)
 
-            np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-            np.save(folder_path + 'pred.npy', preds)
-            np.save(folder_path + 'true.npy', trues)
+            with open(f"{folder_path}/metrics-{data_pred_len}-{self.args.errcor_coef}.txt", 'w') as f:
+                f.write(setting + "  \n")
+                f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
+                f.write('\n')
+                f.write('\n')
+
             self.args.pred_len = self.ori_pred_len
+
+        if not loaded_any_criterion:
+            raise FileNotFoundError("No valid modelerr checkpoint found for any coeff and criterion.")
         return
 
     def train_infer_batch_with_trend_season(self, setting, ecm="linear", error_flags=None):
         # Adjust setting for predicted length
-        model_pred_len = self.args.seq_len
-        setting_components = setting.split("_")
-        print(setting_components)
-        setting_components[5] = str(model_pred_len)
-        setting_components[11] = "pl"+str(model_pred_len)
-        setting = "_".join(setting_components)
+        setting, model_pred_len = self._resolve_backbone_setting(setting)
         print(setting)
-      
+
         # Initialize wandb logging if enabled
         if self.args.wandb:
             run_id = f"{random.randint(1000, 9999)}-{setting}-{ecm}"
@@ -1170,19 +941,19 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
 
         data_pred_len =self.args.pred_len
-        num_ar = math.ceil(data_pred_len//model_pred_len)
+        num_ar = math.ceil(data_pred_len/model_pred_len)
         self.args.pred_len = model_pred_len
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
 
 
         # Load the trained backbone model
         print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
 
         # Prediction, ground truth, and correction component containers
         preds = []
         trues = []
-        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm +  '/'
+        folder_path = f'./scratch/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm +  '/'
 
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -1211,19 +982,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         enc_inp =  pred_y
                        
                     batch_x = enc_inp 
-                    dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                    dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                    
+                    dec_inp = self._make_dec_inp(batch_y)
+
                     # Forward pass
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            if self.args.output_attention:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                            else:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    else:
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    
+                    outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+
                     outputs = outputs[:,:,:]
                     f_dim = -1 if self.args.features == 'MS' else 0
                     outputs = outputs[:, -self.args.pred_len:, :]
@@ -1266,9 +1029,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     pt = pred_trend[:, -self.args.pred_len:, :]         # predicted trends
                     ps = pred_seasonal[:, -self.args.pred_len:, :]         # predicted seasonal
 
-                    # print("Pred shape:", pred.shape, "True shape:", true.shape, 
-                    #       "Predicted Trend shape:", pt.shape, "Predicted Seasonal shape:", ps.shape)
-                    # print("Batch X shape:", batch_x.shape, "Batch Y shape:", batch_y.shape)
                     
                     # Store correction data (input = [input, pred_trend, pred_seasonal], target = error_trend, error_seasonal)
                     corr_in = torch.cat([batch_x, pt, ps], dim=-1)         # => [B, T_enc_or_pred, C_total]
@@ -1294,7 +1054,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         gts = []
                         pds = []
 
-                        for ii in range(7):
+                        for ii in range(min(7, true.shape[-1])):
                             gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
                             gts.append(gt)
                             pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
@@ -1307,50 +1067,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         # Concatenate predictions and ground truths
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
-        # print('test shape:', preds.shape, trues.shape)
         preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
         trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        # print('test shape:', preds.shape, trues.shape)
 
         # result save
-        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm +  '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        
-        # dtw calculation
-        if self.args.use_dtw:
-            dtw_list = []
-            manhattan_distance = lambda x, y: np.abs(x - y)
-            for i in range(preds.shape[0]):
-                x = preds[i].reshape(-1,1)
-                y = trues[i].reshape(-1,1)
-                if i % 100 == 0:
-                    print("calculating dtw iter:", i)
-                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                dtw_list.append(d)
-            dtw = np.array(dtw_list).mean()
-        else:
-            dtw = -999
-            
-        # Save metrics and prediction
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open(f"result_long_term_forecast.txt", 'w')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f.write('\n')
-        f.write('\n')
-        f.close()
+        folder_path = f'./scratch/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_{self.args.kernel_size}/' + setting + f'-' + ecm +  '/'
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
+        self._save_results(setting, folder_path, preds, trues)
 
         # Prepare training data for error correction
         X = torch.cat(correction_inputs, dim=0)  # shape: (N, T, D)
         Y = torch.cat(correction_targets, dim=0)
 
-        from torch.utils.data import TensorDataset, DataLoader, random_split
         # Normalize inputs (pred) and targets (error)
         Y_mean = Y.mean(dim=(0, 1), keepdim=True)
         Y_std = Y.std(dim=(0, 1), keepdim=True) + 1e-6
@@ -1364,91 +1092,32 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
         val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
 
+        input_dim = X.shape[-1]
 
-        if ecm == "random_forest" or ecm == "logistic" or ecm == "xgboost":
-            input_dim=X.shape[-1] 
-
-            modelerr_full, _, _, _, is_torch_model = create_error_corrector(
-                                                        ecm=ecm,
-                                                        input_dim=input_dim,
-                                                        T=X.shape[1],
-                                                        output_dim=Y.shape[-1],
-                                                        hidden_dim=self.args.err_h,
-                                                        device=self.device,
-                                                    )
-
-        else:
-            input_dim=X.shape[-1] 
-
-            modelerr_full, optimizer_full, loss_fn_full, scheduler_full, is_torch_model = create_error_corrector(
-                                                                    ecm=ecm,
-                                                                    input_dim=input_dim,
-                                                                    T=X.shape[1],
-                                                                    output_dim=Y.shape[-1],
-                                                                    hidden_dim=self.args.err_h,
-                                                                    device=self.device,
-                                                                )
+        modelerr_full, optimizer_full, loss_fn_full, scheduler_full, is_torch_model = create_error_corrector(
+                                                                ecm=ecm,
+                                                                input_dim=input_dim,
+                                                                T=X.shape[1],
+                                                                output_dim=Y.shape[-1],
+                                                                hidden_dim=self.args.err_h,
+                                                                device=self.device,
+                                                            )
             
-
-            # input_dim=X.shape[-1] // 3 * 2
-
-            # modelerr_season, optimizer_season, loss_fn_season, scheduler_season, is_torch_model = create_error_corrector(
-            #                                                         ecm=ecm,
-            #                                                         input_dim=input_dim,
-            #                                                         T=X.shape[1],
-            #                                                         output_dim=Y.shape[-1] // 2,
-            #                                                         hidden_dim=self.args.err_h,
-            #                                                         device=self.device
-            #                                                     )
-            
-            # modelerr_trend, optimizer_trend, loss_fn_trend, scheduler_trend, is_torch_model = create_error_corrector(
-            #                                                 ecm=ecm,
-            #                                                 input_dim=input_dim,
-            #                                                 T=X.shape[1],
-            #                                                 output_dim=Y.shape[-1] // 2,
-            #                                                 hidden_dim=self.args.err_h,
-            #                                                 device=self.device
-            #                                             )
         # -------------------------------------------------------------------------------------- Train Error Corrector Model --------------------------------------------------------------------------------------
         # Train the error model (Torch or Scikit-Learn)
         if is_torch_model:
         # -------------------------------------------------------------------------------------- Train Error Corrector Model (Torch) --------------------------------------------------------------------------------------
-            # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-            # best_val_loss_trend = float('inf')  # Initialize best validation loss as infinity
-            # best_val_loss_seasonal = float('inf')  # Initialize best validation loss as infinity
-            # best_model_err_trend = None
-            # best_model_err_season = None
-
             best_val_loss = float('inf')  # Initialize average validation loss as infinity
             best_model_err_full = None
 
             for epoch in range(100):
                 modelerr_full.train()
-                # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                # modelerr_season.train()
-                # modelerr_trend.train()
 
                 total_loss = 0
                 total_loss_trend = 0
                 total_loss_seasonal = 0
                 for xb, yb in train_loader:
                     optimizer_full.zero_grad()
-                    # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                    # optimizer_season.zero_grad()
-                    # optimizer_trend.zero_grad()
-
-
-                    # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                    # B, T, C_x = xb.shape
-                    # _, _, C_y2 = yb.shape       # 14
-                    # C_err = C_y2 // 2           # 7
-                    # C_hist = C_x - C_y2         # 21 - 14 = 7
-                    # xb_trend =  xb[:, :, :C_hist + C_err]
-                    # yb_trend = yb[:, :, :C_err] 
-                    
-                    # xb_season = torch.cat([xb[:, :, :C_hist], xb[:, :, C_hist+C_err:C_hist+2*C_err]], dim=-1)
-                    # yb_season = yb[:, :, C_err:]                  # shape (64, 96,  7)
-
                     # Train 1 full model for season and trend
                     pred_full = modelerr_full(xb)
 
@@ -1486,12 +1155,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         "epoch": epoch + 1
                     })
 
-                # Validation phase
-
-                # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                # modelerr_trend.eval()
-                # modelerr_season.eval()
-
                 modelerr_full.eval()
                 val_loss = 0
                 val_loss_trend = 0
@@ -1499,23 +1162,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 with torch.no_grad():
                     for xb, yb in val_loader:
-                        # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                        # B, T, C_x = xb.shape
-                        # _, _, C_y2 = yb.shape       # 14
-                        # C_err = C_y2 // 2           # 7
-                        # C_hist = C_x - C_y2         # 21 - 14 = 7
-                        # xb_trend =  xb[:, :, :C_hist + C_err]
-                        # yb_trend = yb[:, :, :C_err] 
-                        
-                        # xb_season = torch.cat([xb[:, :, :C_hist], xb[:, :, C_hist+C_err:C_hist+2*C_err]], dim=-1)
-                        # yb_season = yb[:, :, C_err:]                  # shape (64, 96,  7)
-        
-                        # pred_trend = modelerr_trend(xb_trend)
-                        # pred_season = modelerr_season(xb_season)
-
-                        # loss_trend = loss_fn_trend(pred_trend, yb_trend)
-                        # loss_seasonal = loss_fn_season(pred_season, yb_season)
-
 
                         pred_full = modelerr_full(xb)
                         
@@ -1526,13 +1172,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         loss_trend = loss_fn_full(pred_trend, true_trend)
                         loss_seasonal = loss_fn_full(pred_season, true_season)
 
-                        loss = loss_trend * self.args.season_coef + loss_seasonal * self.args.trend_coef
+                        loss = loss_seasonal * self.args.season_coef + loss_trend * self.args.trend_coef
 
                         val_loss += loss.item() * xb.size(0)
                         val_loss_trend += loss_trend.item() * xb.size(0)
                         val_loss_seasonal += loss_seasonal.item() * xb.size(0)
-
-                        # val_loss = val_loss_trend * self.args.trend_coef + val_loss_seasonal * self.args.season_coef
                 
                 avg_val_loss = val_loss / len(val_loader.dataset)
                 avg_loss_trend = val_loss_trend / len(val_loader.dataset)
@@ -1547,126 +1191,58 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     })
 
                 if avg_val_loss < best_val_loss:
-                    best_model_err_full = modelerr_full
-                    # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                    # best_model_err_season = modelerr_season
-                    # best_model_err_trend = modelerr_trend
+                    best_val_loss = avg_val_loss
+                    best_model_err_full = copy.deepcopy(modelerr_full)
 
-        else:
-            # -------------------------------------------------------------------------------------- Train Error Corrector Model (Scikit-Learn) --------------------------------------------------------------------------------------
-            # Collect all training data
 
-            # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-            # train_X_trend, train_Y_trend, train_X_seasonal, train_Y_seasonal = [], [], [], []
-            train_X, train_Y = [], []
-            for xb, yb in train_loader:
-                # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                # B, T, C_x = xb.shape
-                # _, _, C_y2 = yb.shape       # 14
-                # C_err = C_y2 // 2           # 7
-                # C_hist = C_x - C_y2         # 21 - 14 = 7
-
-                # xb_trend =  xb[:, :, :C_hist + C_err]
-                # yb_trend = yb[:, :, :C_err] 
-                
-                # xb_season = torch.cat([xb[:, :, :C_hist], xb[:, :, C_hist+C_err:C_hist+2*C_err]], dim=-1)
-                # yb_season = yb[:, :, C_err:]                  # shape (64, 96,  7)
-
-                # train_X_trend.append(xb_trend.cpu().numpy())
-                # train_Y_trend.append(yb_trend.cpu().numpy())
-
-                # train_X_seasonal.append(xb_season.cpu().numpy())
-                # train_Y_seasonal.append(yb_season.cpu().numpy())    
-                
-                train_X.append(xb.cpu().numpy())
-                train_Y.append(yb.cpu().numpy())
-
-            # ----------------------------------------------------------------------------Uncomment if used separate models for trend and season
-            # train_X_trend = np.concatenate(train_X_trend, axis=0)
-            # train_Y_trend = np.concatenate(train_Y_trend, axis=0)
-            # train_X_seasonal = np.concatenate(train_X_seasonal, axis=0)
-            # train_Y_seasonal = np.concatenate(train_Y_seasonal, axis=0)
-            # modelerr_season.fit(train_X_seasonal, train_Y_seasonal)
-            # modelerr_trend.fit(train_X_trend, train_Y_trend)
-
-            train_X = np.concatenate(train_X, axis=0)
-            train_Y = np.concatenate(train_Y, axis=0)
-
-            # Fit the model
-            modelerr_full.fit(train_X, train_Y)        
-
-            # Validation
-            # val_X, val_Y = [], []
-            # for xb, yb in val_loader:
-            #     val_X.append(xb.cpu().numpy())
-            #     val_Y.append(yb.cpu().numpy())
-            # val_X = np.concatenate(val_X, axis=0)
-            # val_Y = np.concatenate(val_Y, axis=0)
-
-            # val_pred = modelerr_full.predict(val_X)
-            # val_loss = np.mean(np.abs(val_pred - val_Y))  # L1 loss
-            # print(f"Validation Loss: {val_loss:.4f}")
-            # best_model_err_trend = modelerr_trend
-            # best_model_err_season = modelerr_season
-            best_model_err_full = modelerr_full
-
-        for criterion_name in ["MSE","MAE"]:       
+        for criterion_name in ["MSE", "MAE"]:
             print("Searching for best error coefficient using criterion:", criterion_name)
             criterion = self._select_criterion(criterion_name=criterion_name)
-            # vali_data, vali_loader = self._get_data(flag='val')
             best_i = 0
-            best_val_loss = float('inf')  # Initialize best validation loss as infinity
+            best_val_loss = float('inf')
+            best_save_path = None
 
-            # Hyperparameter search for error correction weight
             print("Begin searching for best error coefficient")
-            for i in error_flags:
+            error_flags_to_use = [float(x) for x in error_flags] if error_flags else [0.01, 0.03, 0.05, 0.07, 0.1, 0.3, 0.5, 0.7, 1]
+            for i in error_flags_to_use:
                 print(i)
-                # ----------------------------------------------------------------------------- Uncomment if used separate models for trend and season
-                # avg_val_loss = self.vali_with_seasonal_trend(vali_data, vali_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model_seasonal=best_model_err_season, error_model_trend=best_model_err_trend, error_model_full=best_model_err_full)
-                avg_val_loss = self.vali_with_seasonal_trend(ecm_val_data, ecm_val_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model_full=best_model_err_full)
+                avg_val_loss = self.vali_with_seasonal_trend(ecm_val_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model_full=best_model_err_full)
 
                 if avg_val_loss < best_val_loss:
                     best_val_loss = avg_val_loss
                     best_i = i
                     print(f"New best validation loss: {best_val_loss:.4f} with coef {i}.")
 
-            # Save best model
-            if is_torch_model:
-                torch.save(best_model_err_full.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}.pth'))
-                # Uncomment if used separate models for trend and season
-                # torch.save(best_model_err_season.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-season-{self.args.season_coef}.pth'))
-                # torch.save(best_model_err_trend.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-trend-{self.args.trend_coef}.pth'))        
-            else:
-                save_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-{criterion_name}.pkl')
-                # Uncomment if used separate models for trend and season
-                # save_path_season = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-season.pkl')
-                # save_path_trend = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-trend.pkl')
+                    # Remove previous best checkpoint
+                    if best_save_path is not None and os.path.exists(best_save_path):
+                        os.remove(best_save_path)
 
-                joblib.dump(best_model_err_full, save_path)
+                    # Save new best checkpoint
+                    if is_torch_model:
+                        best_save_path = os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}-{self.args.kernel_size}.pth')
+                        torch.save(best_model_err_full.state_dict(), best_save_path)
+                    else:
+                        best_save_path = os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-{criterion_name}.pkl')
+                        joblib.dump(best_model_err_full, best_save_path)
+
+            print(f"Best model for {criterion_name} saved to: {best_save_path}")
 
 
     
 
-    def vali_with_seasonal_trend(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model_seasonal=None, error_model_trend=None, error_model_full=None):
+    def vali_with_seasonal_trend(self, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model_full=None):
         total_loss = []
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
+            for batch_x, batch_y, batch_x_mark, batch_y_mark in vali_loader:
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float()
 
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                dec_inp = self._make_dec_inp(batch_y)
+                outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                 f_dim = -1 if self.args.features == 'MS' else 0
                 outputs = outputs[:, -self.args.pred_len:, f_dim:]
                 batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
@@ -1677,72 +1253,40 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 if error_coeff == 0:
                     loss = criterion(pred, true)
                 else:
-                    f_dim = -1 if self.args.features == 'MS' else 0
-
                     pred_trend    = moving_avg(outputs, kernel_size=self.args.kernel_size)       # [B, T, C_total]
                     pred_seasonal = outputs - pred_trend                      # [B, T, C_total]
 
                     pt = pred_trend[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
                     ps = pred_seasonal[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
-
-                    # ------------------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                    # meinput_trend = torch.cat([
-                    #     batch_x,    # [B, pred_len, C_history]
-                    #     pt,         # [B, pred_len, C]
-                    # ], dim=-1)      # → [B, pred_len, C_history + 2*C]
-
-                    # meinput_season = torch.cat([
-                    #     batch_x,    # [B, pred_len, C_history]
-                    #     ps,         # [B, pred_len, C]
-                    # ], dim=-1)      # → [B, pred_len, C_history + 2*C]
                     
                     meinput = torch.cat([batch_x, pt, ps], dim=-1)      
 
                     if is_torch_model:
-                        # -------------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                        # perr_trend = error_model_trend(meinput_trend)
-                        # perr_season = error_model_seasonal(meinput_season)
                         perr_full = error_model_full(meinput)
-                        perr_trend, perr_season = perr_full.split(perr_full.shape[-1] // 2, dim=-1)
-
                     else:
-                        perr = error_model_full.predict(meinput.cpu().numpy())
-                        perr_trend, perr_season = perr.split(perr.shape[-1] // 2, axis=-1)
-
-                        # -------------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                        # perr_trend = error_model_trend.predict(meinput_trend.cpu().numpy())
-                        # perr_season = error_model_seasonal.predict(meinput_season.cpu().numpy())
-
-                        # perr_trend = torch.tensor(perr_trend).to(self.device)
-                        # perr_season = torch.tensor(perr_season).to(self.device)
-
+                        perr_full = torch.tensor(error_model_full.predict(meinput.cpu().numpy())).to(self.device)
+                    perr_trend, perr_season = perr_full.split(perr_full.shape[-1] // 2, dim=-1)
 
                     perr = perr_trend + perr_season  # [B, pred_len, C]
-                    
                     if self.args.trend_coef == 0:
                         perr = perr_season
                     elif self.args.season_coef == 0:
                         perr = perr_trend
-                    
-                    perr = torch.tensor(perr).to(self.device)
+
+                    perr = perr.to(self.device)
 
                     outputs_pred = outputs + perr * error_coeff
 
                     loss = criterion(outputs_pred.to("cpu"), true)
 
-                total_loss.append(loss)
-        total_loss = np.average(total_loss)
+                total_loss.append(loss.item())
+            total_loss = np.average(total_loss)
         self.model.train()
         return total_loss
 
     def test_infer_batch_with_trend_season(self, setting, ecm="linear"):
         # Adjust model setting based on prediction length
-        model_pred_len = self.args.seq_len
-        setting_components = setting.split("_")
-        print(setting_components)
-        setting_components[5] = str(model_pred_len)
-        setting_components[11] = "pl"+str(model_pred_len)
-        setting = "_".join(setting_components)
+        setting, model_pred_len = self._resolve_backbone_setting(setting)
         print(setting)
 
         # Load test data 
@@ -1755,63 +1299,53 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         # Load the backbone model
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
+        self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
         
 
-        input_dim=self.args.enc_in*2    # input_dim for error corrector model (input + trend + seasonal)
-        out_dim = self.args.enc_in*1    # output_dim for error corrector model
         print('loading modelerr')
 
-        if ecm == "random_forest" or ecm == "logistic" or ecm == "xgboost":
-            modelerr, _, _, _, is_torch_model = create_error_corrector(ecm=ecm, input_dim=input_dim, T=model_pred_len, output_dim=out_dim, hidden_dim=self.args.err_h, device=self.device)
-        else:
-            modelerr_full, _, _, _, is_torch_model = create_error_corrector(ecm=ecm, input_dim=self.args.enc_in*3, T=model_pred_len, output_dim=self.args.enc_in*2, hidden_dim=self.args.err_h, device=self.device)
+        modelerr_full, _, _, _, is_torch_model = create_error_corrector(ecm=ecm, input_dim=self.args.enc_in*3, T=model_pred_len, output_dim=self.args.enc_in*2, hidden_dim=self.args.err_h, device=self.device)
             
-            # -------------------------------------------------------------- Uncomment if used separate models for trend and season
-            # modelerr_trend, _, _, _, is_torch_model = create_error_corrector(ecm=ecm, input_dim=input_dim, T=model_pred_len, output_dim=out_dim, hidden_dim=self.args.err_h, device=self.device)
-            # modelerr_season, _, _, _, is_torch_model = create_error_corrector(ecm=ecm, input_dim=input_dim, T=model_pred_len, output_dim=out_dim, hidden_dim=self.args.err_h, device=self.device)
-
-        
         # Automated process to find the best error correction coefficient that was recorded
-        possible_coeffs = [0, 0.1, 0.3, 0.5, 0.7, 1] 
+        possible_coeffs = self._candidate_error_coeffs([0.01, 0.03, 0.05, 0.07, 0.09, 0.1, 0.3, 0.5, 0.7, 1.0])
         model_loaded = False
+        loaded_any_criterion = False
         for criterion_name in ["MSE", "MAE"]:
+            # 1. RESET THE FLAG
+            model_loaded = False
+
+            # 2. ENSURE PRED_LEN IS CORRECT FOR THIS RUN
+            self.args.pred_len = model_pred_len
+
+            # 3. (Optional but safer) Clear GPU memory
+            torch.cuda.empty_cache()
             for coeff in possible_coeffs:
                 try:
-                    if is_torch_model:
-                        modelerr_full.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}.pth')))
-                        modelerr_full.eval()
-                        model_loaded = True 
-                        break
-                        # -------------------------------------------------------------- Uncomment if used separate models for trend and season    
-                        # modelerr_trend.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-trend-{self.args.trend_coef}.pth')))
-                        # modelerr_season.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-season-{self.args.season_coef}.pth'))) 
-                        # modelerr_trend.eval()  
-                        # modelerr_season.eval()
-                    else:
-                        # load_path_trend = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-trend.pkl')
-                        # load_path_season = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-season.pkl')
-                        load_path = os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pkl')
+                    modelerr_full.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}-{self.args.kernel_size}.pth')))
+                    modelerr_full.eval()
+                    model_loaded = True
+                    self.args.errcor_coef = coeff
+                    print(f"Loaded best ECM checkpoint with coeff={coeff} for criterion={criterion_name}")
 
-                        # modelerr_trend = joblib.load(load_path_trend)
-                        # modelerr_season = joblib.load(load_path_season)
-                        modelerr = joblib.load(load_path)
-                        model_loaded = True
-                        break
+                    break
                 except FileNotFoundError:
                     continue
 
             if not model_loaded:
-                raise FileNotFoundError("No valid modelerr checkpoint found for any coeff and criterion.")
+                print("Current setting", setting, ecm, criterion_name)
+                continue
+
+            loaded_any_criterion = True
 
             preds = []
             trues = []
-            folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
+            folder_path = f'./scratch/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_{self.args.kernel_size}/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
 
             self.model.eval()
 
+            print("Using error correction coefficient:", self.args.errcor_coef)
             with torch.no_grad():
                 for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
                     batch_x = batch_x.float().to(self.device)
@@ -1830,18 +1364,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         else:
                             enc_inp =  pred_y
                         batch_x = enc_inp #Autoregression
-                        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                        dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                        
+                        dec_inp = self._make_dec_inp(batch_y)
+
                         # Forward pass through the model
-                        if self.args.use_amp:
-                            with torch.cuda.amp.autocast():
-                                if self.args.output_attention:
-                                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                                else:
-                                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                        else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                        outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
                         f_dim = -1 if self.args.features == 'MS' else 0
 
                         # Error correction step
@@ -1850,38 +1376,17 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             pred_seasonal = outputs - pred_trend                      # [B, T, C_total]
                             pt = pred_trend[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
                             ps = pred_seasonal[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
-                            meinput_trend = torch.cat([batch_x, pt], dim=-1)      
-                            meinput_season = torch.cat([batch_x, ps], dim=-1)      
-                            meinput = torch.cat([batch_x, pt, ps], dim=-1)      
+                            meinput = torch.cat([batch_x, pt, ps], dim=-1)
 
                             if is_torch_model:
-                                # -------------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                                # perr_trend = modelerr_trend(meinput_trend)
-                                # perr_season = modelerr_trend(meinput_season)
-                                # perr = perr_trend + perr_season  # [B, pred_len, C]
-
                                 pred_full = modelerr_full(meinput)
-                                pred_trend, pred_season = pred_full.split(pred_full.shape[-1] // 2, dim=-1)
-                                perr = pred_trend + pred_season  # [B, pred_len, C]
-                                # if self.args.trend_coef == 0:
-                                #     perr = pred_season
-                                # elif self.args.season_coef == 0:
-                                #     perr = pred_trend
                             else:
-                                # -------------------------------------------------------------------------------Uncomment if used separate models for trend and season
-                                # perr_trend = modelerr_trend.predict(meinput_trend.cpu().numpy())
-                                # perr_season = modelerr_season.predict(meinput_season.cpu().numpy())
-                                # perr_trend = torch.tensor(perr_trend).to(self.device)
-                                # perr_season = torch.tensor(perr_season).to(self.device)
+                                pred_full = torch.tensor(modelerr_full.predict(meinput.cpu().numpy())).to(self.device)
+                            pred_trend, pred_season = pred_full.split(pred_full.shape[-1] // 2, dim=-1)
+                            perr = pred_trend + pred_season  # [B, pred_len, C]
 
-                                perr = modelerr.predict(meinput.cpu().numpy())
-                                perr = torch.tensor(perr).to(self.device)
-
-
-                            # trend_err_pred, seasonal_err_pred = perr.chunk(2, dim=-1)
-                            # perr = (perr_trend * self.args.trend_coef + perr_season * self.args.season_coef) * 2 # [B, pred_len, C]
-                            outputs_pred = outputs + perr*self.args.errcor_coef
-
+                            outputs_pred = outputs + perr * self.args.errcor_coef
+                            outputs = outputs_pred
 
                         outputs = outputs[:, -self.args.pred_len:, :]
 
@@ -1904,8 +1409,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                         pred = outputs[:batch_y.shape[0],:,:]
                         
-                        if self.args.errcor_coef>0:
-                            pred =  outputs_pred[:batch_y.shape[0], -self.args.pred_len:, f_dim:].detach().cpu().numpy()
+                        # if self.args.errcor_coef>0:
+                        #     pred =  outputs_pred[:batch_y.shape[0], -self.args.pred_len:, f_dim:].detach().cpu().numpy()
                         true = batch_y
 
                         opreds.append(pred)
@@ -1947,7 +1452,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             print('test shape:', preds.shape, trues.shape)
 
             # result save
-            folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
+            folder_path = f'./scratch/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_{self.args.kernel_size}/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
+            print("Saving results to:", folder_path)
             if not os.path.exists(folder_path):
                 os.makedirs(folder_path)
             
@@ -1983,607 +1489,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             np.save(folder_path + 'pred.npy', preds)
             np.save(folder_path + 'true.npy', trues)
             self.args.pred_len = self.ori_pred_len
+
+        if not loaded_any_criterion:
+            raise FileNotFoundError("No valid modelerr checkpoint found for any coeff and criterion.")
         return
-
-
-
-
-
-
-
-    def train_infer_batch_with_trend_season_ablation1(self, setting, ecm="linear", error_flags=None):
-        # Adjust setting for predicted length
-        model_pred_len = self.args.seq_len
-        setting_components = setting.split("_")
-        print(setting_components)
-        setting_components[5] = str(model_pred_len)
-        setting_components[11] = "pl"+str(model_pred_len)
-        setting = "_".join(setting_components)
-        print(setting)
-      
-        # Initialize wandb logging if enabled
-        if self.args.wandb:
-            run_id = f"{random.randint(1000, 9999)}-{setting}-{ecm}"
-            wandb.init(
-                project="timeecm",     
-                name=run_id            
-            )
-
-
-        # Load test data
-        test_data, test_loader = self._get_data(flag='val')
-        train_data, _ = self._get_data(flag='train')
-
-        total_len = len(test_data)
-        train_len = int(0.7 * total_len)
-        val_len = total_len - train_len
-
-        # Split
-        _, ecm_val_data = torch.utils.data.random_split(test_data, [train_len, val_len])
-        # test_loader = torch.utils.data.DataLoader(test_data, batch_size=self.args.batch_size, shuffle=True)
-        ecm_val_loader = torch.utils.data.DataLoader(ecm_val_data, batch_size=self.args.batch_size, shuffle=False)
-        
-        more_data_len = train_len
-
-        if len(train_data) >= more_data_len:
-            generator = torch.Generator().manual_seed(42)
-            more_data, _ = torch.utils.data.random_split(train_data, [more_data_len, len(train_data) - more_data_len], generator=generator)
-        else:
-            raise ValueError(f"train_data too small ({len(train_data)}) to extract {val_len} samples.")
-        
-        ecm_val_data = torch.utils.data.ConcatDataset([ecm_val_data, more_data])
-
-        ecm_val_loader = torch.utils.data.DataLoader(ecm_val_data, batch_size=self.args.batch_size, shuffle=False)
-
-
-
-        data_pred_len =self.args.pred_len
-        num_ar = math.ceil(data_pred_len//model_pred_len)
-        self.args.pred_len = model_pred_len
-        self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
-
-
-        # Load the trained backbone model
-        print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
-
-        # Prediction, ground truth, and correction component containers
-        preds = []
-        trues = []
-        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_ablation1/' + setting + f'-' + ecm +  '/'
-
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        
-        #-------------------------------------------------------------------------------------- Backbone Model Inference Phase --------------------------------------------------------------------------------------
-        # Model inference with autoregressive prediction
-        self.model.eval()
-        correction_inputs = []
-        correction_targets = []
-        with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
-                batch_x = batch_x.float().to(self.device)
-                obatch_y = batch_y.float().to(self.device)
-
-                batch_x_mark = batch_x_mark.float().to(self.device)
-                obatch_y_mark = batch_y_mark.float().to(self.device)
-
-                for j in range(num_ar):
-                    # Prepare decoder input and autoregressive input
-                    batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
-                    batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
-                    if j==0:
-                        enc_inp = batch_x
-                        oinput = batch_x
-                    else:
-                        enc_inp =  pred_y
-                       
-                    batch_x = enc_inp 
-                    dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                    dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                    
-                    # Forward pass
-                    if self.args.use_amp:
-                        with torch.cuda.amp.autocast():
-                            if self.args.output_attention:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                            else:
-                                outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    else:
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                    
-                    outputs = outputs[:,:,:]
-                    f_dim = -1 if self.args.features == 'MS' else 0
-                    outputs = outputs[:, -self.args.pred_len:, :]
-                    pred_y = outputs
-
-                    # Handle inverse scaling if needed
-                    if self.args.use_ar==0:
-                        pred_y = obatch_y[:, self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
-
-                    batch_x_mark = batch_y_mark
-                    batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
-                    vbatch_y = batch_y[:, :, f_dim:]
-                    outputs = outputs.detach().cpu().numpy()
-                    batch_y = batch_y.detach().cpu().numpy()
-
-                    # Apply inverse transform
-                    if test_data.scale and self.args.inverse:
-                        shape = outputs.shape
-                        outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                        batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
-            
-            
-                    outputs = outputs[:, :, f_dim:]
-                    batch_y = batch_y[:, :, f_dim:]
-
-                    pred = outputs[:batch_y.shape[0],:,:]
-                    true = batch_y
-
-                    # Construct seasonal and trend components
-                    
-                    torch_pred = torch.tensor(pred).to(self.device)
-                    torch_true = torch.tensor(true).to(self.device)
-
-                    pred_trend = moving_avg(torch_pred, kernel_size=self.args.kernel_size)
-                    pred_seasonal = torch_pred - pred_trend                    
-                    
-                    pt = pred_trend[:, -self.args.pred_len:, :]         # predicted trends
-                    ps = pred_seasonal[:, -self.args.pred_len:, :]         # predicted seasonal
-
-                    # Store correction data (input = [input, pred_trend, pred_seasonal], target = error_trend, error_seasonal)
-                    corr_in = torch.cat([batch_x, pt, ps], dim=-1)         # => [B, T_enc_or_pred, C_total]
-                    correction_inputs.append(corr_in)
-                    correction_targets.append(torch.tensor(true-pred).to(self.device))
-                
-                    preds.append(pred)
-                    trues.append(true)
-
-                    # Visual inspection
-                    if i % 10 == 0:
-                        input =  batch_x[:,:,:].detach().cpu().numpy()
-                        oinput = oinput.detach().cpu().numpy()
-                        if test_data.scale and self.args.inverse:
-                            shape = input.shape
-                            input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                            oinput = test_data.inverse_transform(oinput.reshape(shape[0] * shape[1], -1)).reshape(shape)
-
-                        gts = []
-                        pds = []
-
-                        for ii in range(7):
-                            gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
-                            gts.append(gt)
-                            pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
-                            pds.append(pd)
-                        visualm(gts, pds, os.path.join(folder_path, f"ar{self.args.use_ar}-{i}-{j}.pdf"))
-                    oinput = vbatch_y
-                    if i == 20000:
-                        break
-
-        # Concatenate predictions and ground truths
-        preds = np.concatenate(preds, axis=0)
-        trues = np.concatenate(trues, axis=0)
-        # print('test shape:', preds.shape, trues.shape)
-        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        # print('test shape:', preds.shape, trues.shape)
-
-        # result save
-        folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_ablation1/' + setting + f'-' + ecm +  '/'
-        if not os.path.exists(folder_path):
-            os.makedirs(folder_path)
-        
-        # dtw calculation
-        if self.args.use_dtw:
-            dtw_list = []
-            manhattan_distance = lambda x, y: np.abs(x - y)
-            for i in range(preds.shape[0]):
-                x = preds[i].reshape(-1,1)
-                y = trues[i].reshape(-1,1)
-                if i % 100 == 0:
-                    print("calculating dtw iter:", i)
-                d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                dtw_list.append(d)
-            dtw = np.array(dtw_list).mean()
-        else:
-            dtw = -999
-            
-        # Save metrics and prediction
-        mae, mse, rmse, mape, mspe = metric(preds, trues)
-        print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f = open(f"result_long_term_forecast.txt", 'w')
-        f.write(setting + "  \n")
-        f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-        f.write('\n')
-        f.write('\n')
-        f.close()
-
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-        np.save(folder_path + 'pred.npy', preds)
-        np.save(folder_path + 'true.npy', trues)
-
-        # Prepare training data for error correction
-        X = torch.cat(correction_inputs, dim=0)  # shape: (N, T, D)
-        Y = torch.cat(correction_targets, dim=0)
-
-        from torch.utils.data import TensorDataset, DataLoader, random_split
-        # Normalize inputs (pred) and targets (error)
-        Y_mean = Y.mean(dim=(0, 1), keepdim=True)
-        Y_std = Y.std(dim=(0, 1), keepdim=True) + 1e-6
-        Y = (Y - Y_mean) / Y_std
-
-        # Split dataset
-        dataset = TensorDataset(X, Y)
-        train_size = int(0.7 * len(dataset))  # 80% for training
-        val_size = len(dataset) - train_size   # 20% for validation
-        train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
-        train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
-        val_loader = DataLoader(val_dataset, batch_size=64, shuffle=True)
-
-
-
-        input_dim=X.shape[-1] 
-
-        modelerr_full, optimizer_full, loss_fn_full, scheduler_full, is_torch_model = create_error_corrector(
-                                                                ecm=ecm,
-                                                                input_dim=input_dim,
-                                                                T=X.shape[1],
-                                                                output_dim=Y.shape[-1],
-                                                                hidden_dim=self.args.err_h,
-                                                                device=self.device,
-                                                            )
-            
-
-        # -------------------------------------------------------------------------------------- Train Error Corrector Model --------------------------------------------------------------------------------------
-        # Train the error model (Torch or Scikit-Learn)
-        if is_torch_model:
-        # -------------------------------------------------------------------------------------- Train Error Corrector Model (Torch) --------------------------------------------------------------------------------------
-            best_val_loss = float('inf')  # Initialize average validation loss as infinity
-            best_model_err_full = None
-
-            for epoch in range(100):
-                modelerr_full.train()
-
-
-                total_loss = 0
-                total_loss_trend = 0
-                total_loss_seasonal = 0
-                for xb, yb in train_loader:
-                    optimizer_full.zero_grad()
-
-                    pred_full = modelerr_full(xb)
-                    
-                    loss_full = loss_fn_full(pred_full, yb)
-
-                    loss_full.backward()
-                    optimizer_full.step()
-                    
-                    total_loss += loss_full.item() * xb.size(0)
-
-                avg_loss = total_loss / len(train_loader.dataset)
-                avg_loss_trend = total_loss_trend / len(train_loader.dataset)
-                avg_loss_seasonal = total_loss_seasonal / len(train_loader.dataset)
-
-                scheduler_full.step(avg_loss)
-
-                print(f"Epoch {epoch+1} - Training Loss Trend: {avg_loss_trend:.4f} - Training Loss Seasonal: {avg_loss_seasonal:.4f}")
-                if self.args.wandb:
-                    wandb.log({
-                        "train/total_loss": avg_loss,
-                        "train/trend_loss": avg_loss_trend,
-                        "train/seasonal_loss": avg_loss_seasonal,
-                        "epoch": epoch + 1
-                    })
-
-                # Validation phase
-
-                modelerr_full.eval()
-                val_loss = 0
-                val_loss_trend = 0
-                val_loss_seasonal = 0
-
-                with torch.no_grad():
-                    for xb, yb in val_loader:
-
-                        pred_full = modelerr_full(xb)
-                        
-                        loss = loss_fn_full(yb, pred_full)
-
-
-                        val_loss += loss.item() * xb.size(0)
-                
-                avg_val_loss = val_loss / len(val_loader.dataset)
-                avg_loss_trend = val_loss_trend / len(val_loader.dataset)
-                avg_loss_seasonal = val_loss_seasonal / len(val_loader.dataset)
-                print(f"Epoch {epoch+1} - Validation Loss Trend: {avg_loss_trend:.4f} - Validation Loss Seasonal: {avg_loss_seasonal:.4f}")
-                if self.args.wandb:
-                    wandb.log({
-                        "val/total_loss": avg_val_loss,
-                        "val/trend_loss": avg_loss_trend,
-                        "val/seasonal_loss": avg_loss_seasonal,
-                        "epoch": epoch + 1
-                    })
-
-                if avg_val_loss < best_val_loss:
-                    best_model_err_full = modelerr_full
-
-
-        for criterion_name in ["MSE","MAE"]:       
-            print("Searching for best error coefficient using criterion:", criterion_name)
-            criterion = self._select_criterion(criterion_name=criterion_name)
-            # vali_data, vali_loader = self._get_data(flag='val')
-            best_i = 0
-            best_val_loss = float('inf')  # Initialize best validation loss as infinity
-
-            # Hyperparameter search for error correction weight
-            print("Begin searching for best error coefficient")
-            for i in error_flags:
-                print(i)
-                avg_val_loss = self.vali_with_seasonal_trend_ablation1(ecm_val_data, ecm_val_loader, criterion, error_coeff=i, is_torch_model=is_torch_model, error_model_full=best_model_err_full)
-
-                if avg_val_loss < best_val_loss:
-                    best_val_loss = avg_val_loss
-                    best_i = i
-                    print(f"New best validation loss: {best_val_loss:.4f} with coef {i}.")
-
-            # Save best model
-            if is_torch_model:
-                torch.save(best_model_err_full.state_dict(), os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{best_i}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}-ablation1.pth'))
-
-
-    def vali_with_seasonal_trend_ablation1(self, vali_data, vali_loader, criterion, error_coeff=0, is_torch_model=False, error_model_seasonal=None, error_model_trend=None, error_model_full=None):
-        total_loss = []
-        self.model.eval()
-        with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
-                batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float()
-
-                batch_x_mark = batch_x_mark.float().to(self.device)
-                batch_y_mark = batch_y_mark.float().to(self.device)
-
-                # decoder input
-                dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                else:
-                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, -self.args.pred_len:, f_dim:]
-                batch_y = batch_y[:, -self.args.pred_len:, f_dim:].to(self.device)
-
-                pred = outputs.detach().cpu()
-                true = batch_y.detach().cpu()
-
-                if error_coeff == 0:
-                    loss = criterion(pred, true)
-                else:
-                    f_dim = -1 if self.args.features == 'MS' else 0
-
-                    pred_trend    = moving_avg(outputs, kernel_size=self.args.kernel_size)       # [B, T, C_total]
-                    pred_seasonal = outputs - pred_trend                      # [B, T, C_total]
-
-                    pt = pred_trend[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
-                    ps = pred_seasonal[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
-
-                    
-                    meinput = torch.cat([batch_x, pt, ps], dim=-1)      
-
-                    if is_torch_model:
-                        perr_full = error_model_full(meinput)
-
-                    perr = perr_full
-
-                    perr = torch.tensor(perr).to(self.device)
-
-                    outputs_pred = outputs + perr * error_coeff
-
-                    loss = criterion(outputs_pred.to("cpu"), true)
-
-                total_loss.append(loss)
-        total_loss = np.average(total_loss)
-        self.model.train()
-        return total_loss
-
-    def test_infer_batch_with_trend_season_ablation1(self, setting, ecm="linear"):
-        # Adjust model setting based on prediction length
-        model_pred_len = self.args.seq_len
-        setting_components = setting.split("_")
-        print(setting_components)
-        setting_components[5] = str(model_pred_len)
-        setting_components[11] = "pl"+str(model_pred_len)
-        setting = "_".join(setting_components)
-        print(setting)
-
-        # Load test data 
-        test_data, test_loader = self._get_data(flag='test')
-        data_pred_len =self.args.pred_len
-
-        num_ar = math.ceil(data_pred_len/model_pred_len)
-        self.args.pred_len = model_pred_len
-
-        # Load the backbone model
-        self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
-        print('loading model')
-        self.model.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, 'checkpoint.pth')))
-        
-        print('loading modelerr')
-
-
-        modelerr_full, _, _, _, is_torch_model = create_error_corrector(ecm=ecm, input_dim=self.args.enc_in*3, T=model_pred_len, output_dim=self.args.enc_in*1, hidden_dim=self.args.err_h, device=self.device)
-        
-        # Automated process to find the best error correction coefficient that was recorded
-        possible_coeffs = [0, 0.1, 0.3, 0.5, 0.7, 1] 
-        model_loaded = False
-        for criterion_name in ["MSE", "MAE"]:
-            for coeff in possible_coeffs:
-                try:
-                    if is_torch_model:
-                        modelerr_full.load_state_dict(torch.load(os.path.join(f'{HOME_DIR}/checkpoints/' + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}-ablation1.pth')))
-                        modelerr_full.eval()
-                        model_loaded = True 
-                        break
-                except FileNotFoundError:
-                    continue
-
-            if not model_loaded:
-                raise FileNotFoundError("No valid modelerr checkpoint found for any coeff and criterion.")
-
-            preds = []
-            trues = []
-            folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_ablation1/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path)
-
-            self.model.eval()
-
-            with torch.no_grad():
-                for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
-                    batch_x = batch_x.float().to(self.device)
-                    obatch_y = batch_y.float().to(self.device)
-
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    obatch_y_mark = batch_y_mark.float().to(self.device)
-                    opreds = []
-                    otrues = []
-                    for j in range(num_ar):
-                        batch_y = obatch_y[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
-                        batch_y_mark = obatch_y_mark[:,self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
-                        if j==0:
-                            enc_inp = batch_x
-                            oinput = batch_x
-                        else:
-                            enc_inp =  pred_y
-                        batch_x = enc_inp #Autoregression
-                        dec_inp = torch.zeros_like(batch_y[:, -self.args.pred_len:, :]).float()
-                        dec_inp = torch.cat([batch_y[:, :self.args.label_len, :], dec_inp], dim=1).float().to(self.device)
-                        
-                        # Forward pass through the model
-                        if self.args.use_amp:
-                            with torch.cuda.amp.autocast():
-                                if self.args.output_attention:
-                                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
-                                else:
-                                    outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                        else:
-                            outputs = self.model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
-                        f_dim = -1 if self.args.features == 'MS' else 0
-
-                        # Error correction step
-                        if self.args.errcor_coef>0:
-                            pred_trend    = moving_avg(outputs, kernel_size=self.args.kernel_size)       # [B, T, C_total]
-                            pred_seasonal = outputs - pred_trend                      # [B, T, C_total]
-                            pt = pred_trend[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]
-                            ps = pred_seasonal[:, -self.args.pred_len:, f_dim:]       # [B, pred_len, C]   
-                            meinput = torch.cat([batch_x, pt, ps], dim=-1)      
-
-                            if is_torch_model:
-                                pred_full = modelerr_full(meinput)
-                                perr = pred_full
-
-                            outputs_pred = outputs + perr*self.args.errcor_coef
-
-
-                        outputs = outputs[:, -self.args.pred_len:, :]
-
-                        pred_y = outputs
-                        if self.args.use_ar==0:
-                            pred_y = obatch_y[:, self.args.label_len+model_pred_len*j:self.args.label_len+model_pred_len*(j+1),:]
-
-                        batch_x_mark = batch_y_mark
-                        batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
-                        vbatch_y = batch_y[:, :, f_dim:]
-                        outputs = outputs.detach().cpu().numpy()
-                        batch_y = batch_y.detach().cpu().numpy()
-                        if test_data.scale and self.args.inverse:
-                            shape = outputs.shape
-                            outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                            batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                
-                        outputs = outputs[:, :, f_dim:]
-                        batch_y = batch_y[:, :, f_dim:]
-
-                        pred = outputs[:batch_y.shape[0],:,:]
-                        
-                        if self.args.errcor_coef>0:
-                            pred =  outputs_pred[:batch_y.shape[0], -self.args.pred_len:, f_dim:].detach().cpu().numpy()
-                        true = batch_y
-
-                        opreds.append(pred)
-                        otrues.append(true)
-                        if i % 10 == 0:
-                            input =  batch_x[:,:,:].detach().cpu().numpy()
-                            oinput = oinput.detach().cpu().numpy()
-                            if test_data.scale and self.args.inverse:
-                                shape = input.shape
-                                input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                                oinput = test_data.inverse_transform(oinput.reshape(shape[0] * shape[1], -1)).reshape(shape)
-
-                            gts = []
-                            pds = []
-
-                            # Visualization of predictions and ground truths
-                            for ii in range(7):
-                                gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
-                                gts.append(gt)
-                                pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
-                                pds.append(pd)
-                            visualm(gts, pds, os.path.join(folder_path, f"{data_pred_len}-ar{self.args.use_ar}-{ecm}-mr{self.args.errcor_coef}-{i}-{j}-seasonal{self.args.season_coef}-trend{self.args.trend_coef}.pdf"))
-                        oinput = vbatch_y
-                        if i == 20000:
-                            break
-                    opreds = np.concatenate(opreds, axis=1)
-                    otrues = np.concatenate(otrues, axis=1)
-
-                    opreds = opreds[:,:data_pred_len,:]
-                    otrues = otrues[:,:data_pred_len,:]
-                    
-                    preds.append(opreds)
-                    trues.append(otrues)        
-            preds = np.concatenate(preds, axis=0)
-            trues = np.concatenate(trues, axis=0)
-            print('test shape:', preds.shape, trues.shape)
-            preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-            trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-            print('test shape:', preds.shape, trues.shape)
-
-            # result save
-            folder_path = f'{HOME_DIR}/infer_results_seasonal_{self.args.season_coef}_trend_{self.args.trend_coef}_ablation1/' + setting + f'-' + ecm + f'-' + criterion_name + '/'
-            if not os.path.exists(folder_path):
-                os.makedirs(folder_path)
-            
-            # dtw calculation
-            if self.args.use_dtw:
-                dtw_list = []
-                manhattan_distance = lambda x, y: np.abs(x - y)
-                for i in range(preds.shape[0]):
-                    x = preds[i].reshape(-1,1)
-                    y = trues[i].reshape(-1,1)
-                    if i % 100 == 0:
-                        print("calculating dtw iter:", i)
-                    d, _, _, _ = accelerated_dtw(x, y, dist=manhattan_distance)
-                    dtw_list.append(d)
-                dtw = np.array(dtw_list).mean()
-            else:
-                dtw = -999
-
-
-            mae, mse, rmse, mape, mspe = metric(preds, trues)
-            print('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-            f = open(f"{folder_path}/metrics-{data_pred_len}-{self.args.errcor_coef}.txt", 'w')
-            f.write(setting + "  \n")
-            f.write('mse:{}, mae:{}, dtw:{}'.format(mse, mae, dtw))
-            f.write('\n')
-            f.write('\n')
-            f.close()
-
-            np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe]))
-            np.save(folder_path + 'pred.npy', preds)
-            np.save(folder_path + 'true.npy', trues)
-            self.args.pred_len = self.ori_pred_len
-        return
-

@@ -14,7 +14,7 @@ d_ff=32
 train_epochs=10
 patience=10
 batch_size=16
-
+kernel_size=25
 
 
 python -u run.py \
@@ -49,6 +49,7 @@ python -u run.py \
   --ecm_model $5\
   --season_coef $6 \
   --trend_coef $7 \
+  --kernel_size $kernel_size \
 
 # python -u run.py \
 #   --task_name long_term_forecast \
