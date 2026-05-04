@@ -41,11 +41,11 @@ python -u run.py \
   --down_sampling_method avg \
   --down_sampling_window $down_sampling_window \
   --use_ar $2 \
-  --errcor_coef $4 \
+  --errcor_coef ${4:-1} \
   --err_h 32 \
-  --ecm_model $5\
-  --season_coef $6 \
-  --trend_coef $7 \
+  --ecm_model ${5:-linear} \
+  --season_coef ${6:-0} \
+  --trend_coef ${7:-0} \
   --kernel_size $kernel_size \
 
 
