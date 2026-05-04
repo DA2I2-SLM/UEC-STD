@@ -1,5 +1,6 @@
 import argparse
 import os
+import time
 import torch
 import torch.backends
 from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
@@ -128,7 +129,7 @@ if __name__ == '__main__':
     parser.add_argument('--season_coef', type=float, default=0.5, help="weight of seasonal interpolation")
     parser.add_argument('--trend_coef', type=float, default=0.5, help="weight of trend interpolation")
     parser.add_argument('--use_ar', type=int, default=0, help="use autoregressive decoding?")
-    parser.add_argument('--errcor_coef', type=float, default=0, help="use model error")
+    parser.add_argument('--errcor_coef', type=float, default=-1, help="Error correction blend strength. -1 = auto (use coefficient found during training), 0 = no correction, >0 = manual override")
     parser.add_argument('--err_h', type=int, default=4, help="use model error")
 
     parser.add_argument('--augmentation_ratio', type=int, default=0, help="How many times to augment")
@@ -206,6 +207,17 @@ if __name__ == '__main__':
     else:
         Exp = Exp_Long_Term_Forecast
 
+    if args.is_training in [0, 2]:
+        print(f"[Mode {args.is_training}] ECM args (errcor_coef, ecm_model, season_coef, trend_coef) are not used in this mode and will be ignored.")
+        time.sleep(2)
+    elif args.is_training in [3, 5]:
+        print(f"[Mode {args.is_training}] season_coef and trend_coef are not used in this mode and will be ignored.")
+        print(f"[Mode {args.is_training}] errcor_coef is also ignored during training — the best coefficient is always found automatically via error_flags search.")
+        time.sleep(2)
+    elif args.is_training == 4:
+        print(f"[Mode 4] season_coef and trend_coef are not used in this mode and will be ignored.")
+        time.sleep(2)
+
     if args.is_training==1:
         for ii in range(args.itr):
             # setting record of experiments
@@ -243,7 +255,7 @@ if __name__ == '__main__':
     elif args.is_training==0:
         exp = Exp(args)  # set experiments
         ii = 0
-        setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}_{}'.format(
+        setting = '{}_{}_{}_{}_ft{}_sl{}_ll{}_pl{}_dm{}_nh{}_el{}_dl{}_df{}_expand{}_dc{}_fc{}_eb{}_dt{}_{}_{}'.format(
                 args.task_name,
                 args.model_id,
                 args.model,
@@ -262,8 +274,7 @@ if __name__ == '__main__':
                 args.factor,
                 args.embed,
                 args.distil,
-                args.des, 
-                args.ecm_model,
+                args.des,
                 ii)
         print('>>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'.format(setting))
         exp.test(setting, test=1)

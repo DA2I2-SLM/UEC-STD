@@ -324,9 +324,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return
     
     def test_infer(self, setting, test=0, ecm="linear"):
+        setting, model_pred_len = self._resolve_backbone_setting(setting)
+        print(setting)
+
         test_data, test_loader = self._get_data(flag='test')
+        data_pred_len = self.args.pred_len
+        num_ar = math.ceil(data_pred_len / model_pred_len)
+
+        self.args.pred_len = model_pred_len
+
         if test:
             print('loading model')
+            self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
             self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
 
         preds = []
@@ -336,76 +345,79 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             os.makedirs(folder_path)
 
         self.model.eval()
-        poses = []
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(test_loader)):
                 batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float().to(self.device)
-
+                obatch_y = batch_y.float().to(self.device)
                 batch_x_mark = batch_x_mark.float().to(self.device)
-                batch_y_mark = batch_y_mark.float().to(self.device)
-                if i==0:
-                    enc_inp = batch_x
-                else:
-                    enc_inp = torch.cat([enc_inp[:,1:,:], pred_y[:,:1,:]],  dim=1)
+                obatch_y_mark = batch_y_mark.float().to(self.device)
 
-                    # enc_inp = torch.cat([enc_inptp_gt,enc_inptd], dim=2)
-                oinput = batch_x[:,:,:]
-                if self.args.use_ar:
-                    batch_x = enc_inp #Autoregression
-                # decoder input
-                dec_inp = self._make_dec_inp(batch_y)
-                
-                # encoder - decoder
-                outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                oinput = batch_x[:, :, :]
+                opreds = []
+                otrues = []
 
-                outputs = outputs[:, -self.args.pred_len:, :]
-                if i==0:
-                    prev_outputs = outputs
-                else:
-                    outputs[:,:-1,:] = prev_outputs[:,1:,:]*self.args.alpha + outputs[:,:-1,:]*(1-self.args.alpha)
-                    prev_outputs = outputs
+                for j in range(num_ar):
+                    batch_y = obatch_y[:, self.args.label_len + model_pred_len * j:self.args.label_len + model_pred_len * (j + 1), :]
+                    batch_y_mark = obatch_y_mark[:, self.args.label_len + model_pred_len * j:self.args.label_len + model_pred_len * (j + 1), :]
 
-                pred_y = outputs
-                batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
-                outputs = outputs.detach().cpu().numpy()
-                batch_y = batch_y.detach().cpu().numpy()
-                if test_data.scale and self.args.inverse:
-                    shape = outputs.shape
-                    outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                    batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
-        
-        
-                f_dim = -1 if self.args.features == 'MS' else 0
-                outputs = outputs[:, :, f_dim:]
-                batch_y = batch_y[:, :, f_dim:]
+                    if j == 0:
+                        enc_inp = batch_x
+                    else:
+                        enc_inp = pred_y
 
-                pred = outputs
-                true = batch_y
+                    if self.args.use_ar:
+                        batch_x = enc_inp
+
+                    dec_inp = self._make_dec_inp(batch_y)
+                    outputs = self._backbone_forward(batch_x, batch_x_mark, dec_inp, batch_y_mark)
+                    outputs = outputs[:, -self.args.pred_len:, :]
+                    pred_y = outputs
+
+                    batch_x_mark = batch_y_mark
+                    batch_y = batch_y[:, -self.args.pred_len:, :].to(self.device)
+                    outputs = outputs.detach().cpu().numpy()
+                    batch_y = batch_y.detach().cpu().numpy()
+
+                    if test_data.scale and self.args.inverse:
+                        shape = outputs.shape
+                        outputs = test_data.inverse_transform(outputs.reshape(shape[0] * shape[1], -1)).reshape(shape)
+                        batch_y = test_data.inverse_transform(batch_y.reshape(shape[0] * shape[1], -1)).reshape(shape)
+
+                    f_dim = -1 if self.args.features == 'MS' else 0
+                    outputs = outputs[:, :, f_dim:]
+                    batch_y = batch_y[:, :, f_dim:]
+
+                    opreds.append(outputs)
+                    otrues.append(batch_y)
+
+                opreds = np.concatenate(opreds, axis=1)
+                otrues = np.concatenate(otrues, axis=1)
+                opreds = opreds[:, :data_pred_len, :]
+                otrues = otrues[:, :data_pred_len, :]
+
+                pred = opreds
+                true = otrues
 
                 preds.append(pred)
                 trues.append(true)
-                poses.append(batch_x[0,-1, :].detach().cpu().numpy())
-                if i % 20 == 0:
-                    input =  batch_x[:,:,:].detach().cpu().numpy()
-                    oinput = oinput.detach().cpu().numpy()
-                    if test_data.scale and self.args.inverse:
-                        shape = input.shape
-                        input = test_data.inverse_transform(input.reshape(shape[0] * shape[1], -1)).reshape(shape)
-                        oinput = test_data.inverse_transform(oinput.reshape(shape[0] * shape[1], -1)).reshape(shape)
 
+                if i % 20 == 0:
+                    input_ = oinput.detach().cpu().numpy()
+                    if test_data.scale and self.args.inverse:
+                        shape = input_.shape
+                        input_ = test_data.inverse_transform(input_.reshape(shape[0] * shape[1], -1)).reshape(shape)
                     gts = []
                     pds = []
-
                     for ii in range(min(7, true.shape[-1])):
-                        gt = np.concatenate((oinput[0, :, ii], true[0, :, ii]), axis=0)
+                        gt = np.concatenate((input_[0, :, ii], true[0, :, ii]), axis=0)
                         gts.append(gt)
-                        pd = np.concatenate((input[0, :, ii], pred[0, :, ii]), axis=0)
+                        pd = np.concatenate((input_[0, :, ii], pred[0, :, ii]), axis=0)
                         pds.append(pd)
                     visualm(gts, pds, os.path.join(folder_path, str(i) + '.pdf'))
+
                 if i == 200:
                     break
-        
+
         preds = np.concatenate(preds, axis=0)
         trues = np.concatenate(trues, axis=0)
         print('test shape:', preds.shape, trues.shape)
@@ -413,9 +425,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
         print('test shape:', preds.shape, trues.shape)
 
-        # result save
         folder_path = './scratch/infer_results/' + setting + '-' + ecm + '/'
-
         self._save_results(setting, folder_path, preds, trues)
 
         return
@@ -545,9 +555,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     outputs = outputs[:, :, f_dim:]
                     batch_y = batch_y[:, :, f_dim:]
 
-                    pred = outputs[:batch_y.shape[0],:,:]
+                    pred = outputs[:batch_y.shape[0], :batch_y.shape[1], :]
                     true = batch_y
-                    
+
+                    if true.shape[1] < model_pred_len:
+                        continue
+
                     # Store correction data (input = [input, pred], target = error)
                     correction_inputs.append(torch.cat([batch_x, pred_y[:, -self.args.pred_len:, f_dim:].to(self.device)], dim=-1))
                     correction_targets.append(torch.tensor(true-pred).to(self.device))
@@ -716,6 +729,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
         # -------------------------------------------------------------------------------------- Load trained error corrector model --------------------------------------------------------------------------------------
 
+        user_errcor_coef = self.args.errcor_coef
+
         input_dim=self.args.enc_in*2
         print('loading modelerr')
         modelerr, _, _, _, is_torch_model = create_error_corrector(ecm=ecm,
@@ -732,20 +747,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         loaded_any_criterion = False
         for criterion_name in ["MAE", "MSE"]:
             model_loaded = False
+            loaded_coeff = None
             for coeff in possible_coeffs:
                 try:
                     if is_torch_model:
                         print(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth'))
                         modelerr.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth')))
-                        modelerr.eval()  # Set to evaluation mode
+                        modelerr.eval()
                         model_loaded = True
+                        loaded_coeff = coeff
                         print("Modelerr loaded successfully.")
                         break
                     else:
                         print(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pth'))
                         load_path = os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-{criterion_name}.pkl')
                         modelerr = joblib.load(load_path)
-                        model_loaded = True 
+                        model_loaded = True
+                        loaded_coeff = coeff
                         print("Modelerr loaded successfully.")
                         break
                 except FileNotFoundError:
@@ -753,6 +771,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             if not model_loaded:
                 print(f"No checkpoint found for criterion {criterion_name}; trying the next criterion.")
                 continue
+
+            if user_errcor_coef == -1:
+                self.args.errcor_coef = loaded_coeff
+                print(f"Auto mode: using coefficient {loaded_coeff} from training checkpoint.")
+            else:
+                self.args.errcor_coef = user_errcor_coef
+                print(f"Manual mode: using coefficient {user_errcor_coef} (checkpoint was trained with {loaded_coeff}).")
 
             loaded_any_criterion = True
 
@@ -833,7 +858,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         outputs = outputs[:, :, f_dim:]
                         batch_y = batch_y[:, :, f_dim:]
 
-                        pred = outputs[:batch_y.shape[0],:,:]
+                        pred = outputs[:batch_y.shape[0], :batch_y.shape[1], :]
 
                         if self.args.errcor_coef>0:
                             pred =  outputs_pred[:batch_y.shape[0], -self.args.pred_len:, f_dim:].detach().cpu().numpy()
@@ -1012,8 +1037,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     outputs = outputs[:, :, f_dim:]
                     batch_y = batch_y[:, :, f_dim:]
 
-                    pred = outputs[:batch_y.shape[0],:,:]
+                    pred = outputs[:batch_y.shape[0], :batch_y.shape[1], :]
                     true = batch_y
+
+                    if true.shape[1] < model_pred_len:
+                        continue
 
                     # Construct seasonal and trend components
                     
@@ -1296,11 +1324,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         num_ar = math.ceil(data_pred_len/model_pred_len)
         self.args.pred_len = model_pred_len
 
+        user_errcor_coef = self.args.errcor_coef
+
         # Load the backbone model
         self.model = self.model_dict[self.args.model].Model(self.args).float().to(self.device)
         print('loading model')
         self.model.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, 'checkpoint.pth')))
-        
+
 
         print('loading modelerr')
 
@@ -1324,8 +1354,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     modelerr_full.load_state_dict(torch.load(os.path.join(self.args.checkpoints + setting, f'checkpoint-modelerr-{ecm}-found-best-coeff-{coeff}-season-{self.args.season_coef}-trend-{self.args.trend_coef}-{criterion_name}-{self.args.kernel_size}.pth')))
                     modelerr_full.eval()
                     model_loaded = True
-                    self.args.errcor_coef = coeff
-                    print(f"Loaded best ECM checkpoint with coeff={coeff} for criterion={criterion_name}")
+                    if user_errcor_coef == -1:
+                        self.args.errcor_coef = coeff
+                        print(f"Auto mode: using coefficient {coeff} from training checkpoint (criterion={criterion_name}).")
+                    else:
+                        self.args.errcor_coef = user_errcor_coef
+                        print(f"Manual mode: using coefficient {user_errcor_coef} (checkpoint was trained with {coeff}).")
 
                     break
                 except FileNotFoundError:
